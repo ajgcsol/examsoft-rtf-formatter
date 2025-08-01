@@ -825,8 +825,11 @@ if SHAREPOINT_INTEGRATION_AVAILABLE:
         with st.sidebar:
             st.header("🔐 Microsoft 365")
             
-            if render_persistent_auth_ui():
-                # User is authenticated
+            # Always show the authentication UI - it handles both signed in and signed out states
+            is_authenticated = render_persistent_auth_ui()
+            
+            # If user is authenticated, also show additional status and sign out
+            if is_authenticated:
                 render_auth_status()
                 
                 # Add sign out button in sidebar too
@@ -834,8 +837,6 @@ if SHAREPOINT_INTEGRATION_AVAILABLE:
                     if sign_out_persistent():
                         st.success("👋 Signed out!")
                         # Don't use st.rerun() - let natural refresh handle it
-            else:
-                st.info("🔑 Sign in for SharePoint upload")
                 
     except Exception as e:
         st.sidebar.error(f"Auth error: {e}")
@@ -1140,14 +1141,12 @@ App Registration Settings:
   • Files.ReadWrite.All
             """)
             
-            # Placeholder authentication button (would work once app is registered)
-            if st.button("� Sign in with Microsoft 365"):
-                st.warning("⚠️ **App Registration Required**: Contact your IT department to register this application with Microsoft 365 before using SharePoint integration.")
-                st.write("Once configured, this button will:")
-                st.write("• Open Microsoft 365 login in your browser")
-                st.write("• Securely authenticate without passwords")
-                st.write("• Show available SharePoint sites and libraries")
-                st.write("• Allow direct file uploads")
+            # Direct users to the real authentication in the sidebar
+            st.info("🔐 **To enable SharePoint upload:** Use the Microsoft 365 sign-in button in the sidebar →")
+            st.write("Once configured, you will be able to:")
+            st.write("• Sign in securely with your Microsoft 365 account")
+            st.write("• Upload files directly to SharePoint")
+            st.write("• Stay signed in for up to 90 days")
             
             # Mock interface to show what it would look like when working
             st.write("---")
