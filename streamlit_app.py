@@ -14,9 +14,6 @@ try:
     # Import the main app module - this runs the UI automatically
     import examsoft_formatter_updated
     
-    # The module runs automatically on import since the UI code is at module level
-    # This is the expected behavior for Streamlit apps
-    
 except ImportError as e:
     st.error(f"❌ Import Error: {e}")
     st.error("Please ensure all required packages are installed:")

@@ -1181,11 +1181,5 @@ else:
     st.info("Paste your exam questions and answer key above, then click 'Process Data'. Instructions are optional.")
 
 
-# Main entry point
-def main():
-    """Main application entry point - only runs UI code when called directly"""
-    # All the UI code above is already at module level
-    pass
-
-if __name__ == "__main__":
-    main()
+# This file contains the main Streamlit UI code
+# The UI runs immediately when imported
