@@ -11,8 +11,16 @@ st.set_page_config(
 
 # Import and run the main app with comprehensive error handling
 try:
+    # Show some debugging info for deployment troubleshooting
+    import sys
+    st.info(f"🐍 Python version: {sys.version}")
+    st.info(f"📝 Streamlit version: {st.__version__}")
+    
     # Import the main app module
+    st.info("🔄 Loading main application...")
     import examsoft_formatter_updated
+    
+    st.success("✅ Application loaded successfully!")
     
     # The module runs automatically on import since the UI code is at module level
     # This is the expected behavior for Streamlit apps
