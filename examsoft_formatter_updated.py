@@ -817,29 +817,38 @@ st.subheader("Charleston School of Law")
 st.header("ExamSoft RTF Formatter")
 st.write("Paste your instructions, exam questions, and answer key below. No file upload needed.")
 
-# Initialize SharePoint authentication early for better UX
-if SHAREPOINT_INTEGRATION_AVAILABLE:
-    try:
-        initialize_persistent_auth()
-        # Show authentication status in sidebar
-        with st.sidebar:
-            st.header("🔐 Microsoft 365")
-            
-            # Always show the authentication UI - it handles both signed in and signed out states
-            is_authenticated = render_persistent_auth_ui()
-            
-            # If user is authenticated, also show additional status and sign out
-            if is_authenticated:
-                render_auth_status()
+# Initialize SharePoint authentication safely - only once per session
+def initialize_authentication():
+    """Initialize authentication safely without causing crashes on input"""
+    if SHAREPOINT_INTEGRATION_AVAILABLE:
+        try:
+            # Only initialize if not already done
+            if 'auth_initialized' not in st.session_state:
+                initialize_persistent_auth()
+                st.session_state.auth_initialized = True
                 
-                # Add sign out button in sidebar too
-                if st.button("🔓 Sign Out", key="sidebar_signout"):
-                    if sign_out_persistent():
-                        st.success("👋 Signed out!")
-                        # Don't use st.rerun() - let natural refresh handle it
+            # Show authentication status in sidebar
+            with st.sidebar:
+                st.header("🔐 Microsoft 365")
                 
-    except Exception as e:
-        st.sidebar.error(f"Auth error: {e}")
+                # Always show the authentication UI - it handles both signed in and signed out states
+                is_authenticated = render_persistent_auth_ui()
+                
+                # If user is authenticated, also show additional status and sign out
+                if is_authenticated:
+                    render_auth_status()
+                    
+                    # Add sign out button in sidebar too
+                    if st.button("🔓 Sign Out", key="sidebar_signout"):
+                        if sign_out_persistent():
+                            st.success("👋 Signed out!")
+                            # Don't use st.rerun() - let natural refresh handle it
+                    
+        except Exception as e:
+            st.sidebar.error(f"Auth error: {e}")
+
+# Call authentication initialization
+initialize_authentication()
 
 # Show Azure/Docker endpoint status
 if AZURE_CONFIG_AVAILABLE:
