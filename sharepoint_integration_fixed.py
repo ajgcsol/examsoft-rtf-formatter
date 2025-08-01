@@ -426,7 +426,7 @@ App Registration Details:
                                 st.session_state.auth_app = app
                                 st.session_state.auth_flow = flow
                                 st.session_state.auth_step = 'device_code'
-                                st.rerun()
+                                # Don't use st.rerun() - let natural page refresh handle state change
                 
                 elif st.session_state.auth_step == 'device_code':
                     if hasattr(st.session_state, 'auth_flow'):
@@ -442,10 +442,10 @@ App Registration Details:
                                     st.session_state.sharepoint_access_token = token  # Also store with this key
                                     st.session_state.auth_step = 'complete'
                                     st.success("🎉 Authentication successful!")
-                                    st.rerun()
+                                    # Don't use st.rerun() - let natural page refresh handle state change
                                 else:
                                     st.session_state.auth_step = 'initial'
-                                    st.rerun()
+                                    # Don't use st.rerun() - let natural page refresh handle state change
             else:
                 st.success("✅ Authenticated with Microsoft 365")
                 
@@ -591,7 +591,7 @@ App Registration Details:
                     st.session_state.sharepoint_access_token = None
                     st.session_state.auth_step = 'initial'
                     st.success("👋 Successfully signed out!")
-                    st.rerun()
+                    # Don't use st.rerun() - let natural page refresh handle state change
                     
     elif MSAL_AVAILABLE and not CONFIG_AVAILABLE:
         st.info("📋 **Configuration Required**: Microsoft 365 app registration configuration not found.")
