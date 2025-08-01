@@ -3,6 +3,24 @@ import os
 import subprocess
 import requests
 from datetime import datetime
+import streamlit as st
+import pandas as pd
+from pathlib import Path
+import re
+import docx
+from docx import Document
+from docx.shared import Inches
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+import io
+from io import BytesIO
+import zipfile
+
+# Try to import optional dependencies
+try:
+    from striprtf.striprtf import rtf_to_text
+    RTF_AVAILABLE = True
+except ImportError:
+    RTF_AVAILABLE = False
 
 # Import Microsoft 365 configuration
 try:
@@ -420,15 +438,6 @@ def convert_docx_to_rtf_with_libreoffice(docx_path, rtf_path):
     if generated_rtf != rtf_path:
         os.replace(generated_rtf, rtf_path)
 
-
-import streamlit as st
-import re
-import os
-import tempfile
-import requests
-from datetime import datetime
-from io import BytesIO
-import zipfile
 try:
     from sharepoint_integration_fixed import render_sharepoint_ui
     SHAREPOINT_AVAILABLE = True
@@ -471,16 +480,6 @@ def generate_filename(course, section, professor, file_type, extension="rtf"):
     # Generate filename
     filename = f"{course_clean}_{section_clean}_{professor_clean}_{file_type}_{date_stamp}.{extension}"
     return filename
-
-import streamlit as st
-import pandas as pd
-from pathlib import Path
-import re
-import docx
-from docx import Document
-from docx.shared import Inches
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-import io
 
 # SharePoint integration imports
 try:
@@ -1176,3 +1175,13 @@ App Registration Settings:
 
 else:
     st.info("Paste your exam questions and answer key above, then click 'Process Data'. Instructions are optional.")
+
+
+# Main entry point
+def main():
+    """Main application entry point - only runs UI code when called directly"""
+    # All the UI code above is already at module level
+    pass
+
+if __name__ == "__main__":
+    main()

@@ -5,18 +5,25 @@ import streamlit as st
 
 # Try to get config from Streamlit secrets first (for cloud deployment)
 try:
-    M365_CONFIG = {
-        "client_id": st.secrets.get("M365_CLIENT_ID", "4848a7e9-327a-49ff-a789-6f8b928615b7"),
-        "tenant_id": st.secrets.get("M365_TENANT_ID", "charlestonlaw.edu"), 
-        "authority": st.secrets.get("M365_AUTHORITY", "https://login.microsoftonline.com/charlestonlaw.edu"),
-        "scope": [
-            "https://graph.microsoft.com/Sites.ReadWrite.All", 
-            "https://graph.microsoft.com/Files.ReadWrite.All",
-            "https://graph.microsoft.com/User.Read"
-        ],
-        "redirect_uri": "https://yourapp.streamlit.app"  # Will be updated with actual URL
-    }
-except:
+    # Check if we're running in Streamlit Cloud
+    has_secrets = hasattr(st, 'secrets') and len(st.secrets) > 0
+    
+    if has_secrets:
+        M365_CONFIG = {
+            "client_id": st.secrets.get("M365", {}).get("M365_CLIENT_ID", "4848a7e9-327a-49ff-a789-6f8b928615b7"),
+            "tenant_id": st.secrets.get("M365", {}).get("M365_TENANT_ID", "charlestonlaw.edu"), 
+            "authority": st.secrets.get("M365", {}).get("M365_AUTHORITY", "https://login.microsoftonline.com/charlestonlaw.edu"),
+            "scope": [
+                "https://graph.microsoft.com/Sites.ReadWrite.All", 
+                "https://graph.microsoft.com/Files.ReadWrite.All",
+                "https://graph.microsoft.com/User.Read"
+            ],
+            "redirect_uri": "https://csol-examsoft-converter.streamlit.app"
+        }
+    else:
+        raise Exception("No secrets found, using fallback")
+        
+except Exception:
     # Fallback for local development
     M365_CONFIG = {
         "client_id": "4848a7e9-327a-49ff-a789-6f8b928615b7",

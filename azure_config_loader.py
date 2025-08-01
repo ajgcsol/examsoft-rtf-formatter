@@ -18,6 +18,17 @@ def load_azure_config():
     """Load Azure configuration from azure_config.json file or environment variables"""
     config = DEFAULT_CONFIG.copy()
     
+    # First try Streamlit secrets (for cloud deployment)
+    try:
+        if hasattr(st, 'secrets') and 'AZURE' in st.secrets:
+            azure_secrets = st.secrets['AZURE']
+            if 'AZURE_LIBREOFFICE_ENDPOINT' in azure_secrets:
+                config['AZURE_CONVERTER_ENDPOINT'] = azure_secrets['AZURE_LIBREOFFICE_ENDPOINT']
+                config['USE_AZURE'] = True
+                return config
+    except Exception:
+        pass  # Fall through to other methods
+    
     # Try to load from azure_config.json file (created by deployment script)
     try:
         import json
