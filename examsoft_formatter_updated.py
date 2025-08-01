@@ -39,12 +39,9 @@ except ImportError:
 
 # Import SharePoint integration module
 try:
-    print("🔍 Importing persistent_auth module...")
     from persistent_auth import initialize_persistent_auth, render_persistent_auth_ui, render_auth_status, sign_out_persistent
-    print("✅ persistent_auth imported successfully")
     # Define the upload function directly in this file to avoid import issues
     SHAREPOINT_INTEGRATION_AVAILABLE = True
-    print("✅ SharePoint integration enabled")
     
     # Direct upload function with correct path
     def upload_to_sharepoint_corrected(access_token, file_content, filename):
@@ -341,7 +338,6 @@ try:
             return False, f"Upload function error: {str(upload_error)}"
             
 except ImportError as e:
-    print(f"❌ SharePoint integration import failed: {e}")
     SHAREPOINT_INTEGRATION_AVAILABLE = False
 
 def generate_docx_with_questions(questions_list, instructions_text, output_path):

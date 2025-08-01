@@ -110,47 +110,33 @@ def refresh_access_token(refresh_token):
 def get_device_flow():
     """Start device code flow for authentication"""
     try:
-        # Debug configuration loading
-        st.write("🔍 **Debug - M365 Config:**")
-        st.write(f"   Client ID: {M365_CONFIG.get('client_id', 'NOT FOUND')[:8]}...")
-        st.write(f"   Authority: {M365_CONFIG.get('authority', 'NOT FOUND')}")
-        st.write(f"   Scopes: {len(M365_CONFIG.get('scope', []))} scopes")
-        
+        # Validate configuration silently (no st.write calls that interfere with spinner)
         if not M365_CONFIG.get('client_id'):
-            st.error("❌ Client ID not found in configuration")
-            return None, None
+            raise ValueError("Client ID not found in configuration")
             
         if not M365_CONFIG.get('authority'):
-            st.error("❌ Authority not found in configuration")
-            return None, None
+            raise ValueError("Authority not found in configuration")
             
         if not M365_CONFIG.get('scope'):
-            st.error("❌ Scopes not found in configuration")
-            return None, None
+            raise ValueError("Scopes not found in configuration")
         
-        st.write("🔄 Creating MSAL PublicClientApplication...")
+        # Create MSAL app and device flow
         app = msal.PublicClientApplication(
             M365_CONFIG['client_id'],
             authority=M365_CONFIG['authority']
         )
         
-        st.write("🔄 Initiating device flow...")
         flow = app.initiate_device_flow(scopes=M365_CONFIG['scope'])
         
         if "user_code" not in flow:
             error_desc = flow.get('error_description', 'Unknown error')
-            st.error(f"❌ Device flow creation failed: {error_desc}")
-            st.write(f"🔍 **Debug - Flow response:** {flow}")
             raise ValueError(f"Failed to create device flow: {error_desc}")
         
-        st.success("✅ Device flow created successfully!")
         return app, flow
         
     except Exception as e:
-        st.error(f"❌ Failed to start authentication: {str(e)}")
-        st.write("🔍 **Debug - Exception details:**")
-        import traceback
-        st.code(traceback.format_exc())
+        # Log error but don't use st.write inside spinner context
+        print(f"❌ Authentication error: {str(e)}")
         return None, None
 
 def complete_device_flow(app, flow):
@@ -256,33 +242,32 @@ def render_persistent_auth_ui():
             if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary"):
                 try:
                     with st.spinner("Starting authentication..."):
-                        st.write("🔄 Checking configuration...")
-                        
-                        # Validate configuration before proceeding
+                        # Validate configuration before proceeding (no UI calls inside spinner)
                         if not CONFIG_AVAILABLE:
-                            st.error("❌ MSAL library not available")
-                            st.stop()
+                            raise Exception("MSAL library not available")
                             
                         if not M365_CONFIG:
-                            st.error("❌ M365 configuration not loaded")
-                            st.stop()
+                            raise Exception("M365 configuration not loaded")
                         
-                        st.write("🔄 Initializing authentication flow...")
+                        # Initialize authentication flow
                         app, flow = get_device_flow()
                         
                         if app and flow:
                             st.session_state.auth_app = app
                             st.session_state.auth_flow = flow
-                            st.success("✅ Authentication flow started!")
+                            # Don't show success message inside spinner - just rerun
                             st.rerun()
                         else:
-                            st.error("❌ Failed to start authentication flow")
+                            raise Exception("Failed to start authentication flow")
                             
                 except Exception as e:
+                    # Show error after spinner closes
                     st.error(f"❌ Authentication startup error: {str(e)}")
-                    st.write("🔍 **Debug - Full error:**")
-                    import traceback
-                    st.code(traceback.format_exc())
+                    # Optional: Show detailed error for debugging
+                    if str(e) not in ["MSAL library not available", "M365 configuration not loaded"]:
+                        with st.expander("🔍 Debug Details"):
+                            import traceback
+                            st.code(traceback.format_exc())
         else:
             # Show device code
             col1, col2 = st.columns([2, 1])

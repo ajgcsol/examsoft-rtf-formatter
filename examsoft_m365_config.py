@@ -3,17 +3,12 @@
 
 import streamlit as st
 
-# Debug configuration loading
-print("🔍 Loading M365 configuration...")
-
 # Try to get config from Streamlit secrets first (for cloud deployment)
 try:
     # Check if we're running in Streamlit Cloud
     has_secrets = hasattr(st, 'secrets') and len(st.secrets) > 0
-    print(f"🔍 Has secrets: {has_secrets}")
     
     if has_secrets:
-        print("🔍 Using Streamlit Cloud secrets...")
         M365_CONFIG = {
             "client_id": st.secrets.get("M365", {}).get("M365_CLIENT_ID", "4848a7e9-327a-49ff-a789-6f8b928615b7"),
             "tenant_id": st.secrets.get("M365", {}).get("M365_TENANT_ID", "charlestonlaw.edu"), 
@@ -25,14 +20,11 @@ try:
             ],
             "redirect_uri": "https://csol-examsoft-converter.streamlit.app"
         }
-        print(f"🔍 Cloud config loaded - Client ID: {M365_CONFIG['client_id'][:8]}...")
     else:
         raise Exception("No secrets found, using fallback")
         
-except Exception as e:
-    print(f"🔍 Exception loading cloud config: {e}")
+except Exception:
     # Fallback for local development
-    print("🔍 Using local development fallback...")
     M365_CONFIG = {
         "client_id": "4848a7e9-327a-49ff-a789-6f8b928615b7",
         "tenant_id": "charlestonlaw.edu",
@@ -44,7 +36,6 @@ except Exception as e:
         ],
         "redirect_uri": "http://localhost:8501"
     }
-    print(f"🔍 Local config loaded - Client ID: {M365_CONFIG['client_id'][:8]}...")
 
 # Azure AD App Registration Details
 APP_REGISTRATION_INFO = {
