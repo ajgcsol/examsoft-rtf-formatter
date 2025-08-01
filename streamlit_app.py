@@ -9,18 +9,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Import and run the main app with comprehensive error handling
+# Import and run the main app with error handling
 try:
-    # Show some debugging info for deployment troubleshooting
-    import sys
-    st.info(f"🐍 Python version: {sys.version}")
-    st.info(f"📝 Streamlit version: {st.__version__}")
-    
-    # Import the main app module
-    st.info("🔄 Loading main application...")
+    # Import the main app module - this runs the UI automatically
     import examsoft_formatter_updated
-    
-    st.success("✅ Application loaded successfully!")
     
     # The module runs automatically on import since the UI code is at module level
     # This is the expected behavior for Streamlit apps
@@ -40,7 +32,7 @@ Required packages from requirements.txt:
 - office365-rest-python-client>=2.5.0
     """)
     
-    # Show system information
+    # Show system information only on error
     st.write("**System Information:**")
     st.write(f"Python version: {sys.version}")
     st.write(f"Streamlit version: {st.__version__}")

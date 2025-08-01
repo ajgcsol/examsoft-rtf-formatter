@@ -833,7 +833,7 @@ if SHAREPOINT_INTEGRATION_AVAILABLE:
                 if st.button("🔓 Sign Out", key="sidebar_signout"):
                     if sign_out_persistent():
                         st.success("👋 Signed out!")
-                        st.rerun()
+                        # Don't use st.rerun() - let natural refresh handle it
             else:
                 st.info("🔑 Sign in for SharePoint upload")
                 
@@ -1172,7 +1172,7 @@ App Registration Settings:
                 if key.startswith('form_') or key in ['course_input', 'section_input', 'professor_input']:
                     del st.session_state[key]
             st.success("📝 Form cleared! Ready for next exam.")
-            st.rerun()
+            # Don't use st.rerun() - let natural refresh handle it
     
     with col3:
         st.write("") # Spacer
