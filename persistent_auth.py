@@ -255,8 +255,8 @@ def render_persistent_auth_ui():
                         if app and flow:
                             st.session_state.auth_app = app
                             st.session_state.auth_flow = flow
-                            # Don't show success message inside spinner - just rerun
-                            st.rerun()
+                            # Set a flag instead of using st.rerun()
+                            st.session_state.auth_flow_started = True
                         else:
                             raise Exception("Failed to start authentication flow")
                             
@@ -268,7 +268,14 @@ def render_persistent_auth_ui():
                         with st.expander("🔍 Debug Details"):
                             import traceback
                             st.code(traceback.format_exc())
-        else:
+        
+        # Check if auth flow was just started (separate from button to avoid rerun issues)
+        if st.session_state.get('auth_flow_started'):
+            st.session_state.auth_flow_started = False  # Clear the flag
+            st.success("✅ Authentication flow started!")
+        
+        # Show device code if auth flow exists
+        if 'auth_flow' in st.session_state:
             # Show device code
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -298,14 +305,12 @@ def render_persistent_auth_ui():
                             if 'auth_app' in st.session_state:
                                 del st.session_state.auth_app
                             
-                            st.success("🎉 Authentication successful!")
-                            st.success("✅ You'll stay signed in for up to 90 days!")
-                            st.rerun()
+                            # Set completion flag instead of st.rerun()
+                            st.session_state.auth_completed = True
                         else:
                             if 'auth_flow' in st.session_state:
                                 del st.session_state.auth_flow
                             st.error("❌ Authentication failed. Please try again.")
-                            st.rerun()
                 
                 # Cancel button
                 if st.button("❌ Cancel", use_container_width=True):
@@ -313,7 +318,13 @@ def render_persistent_auth_ui():
                         del st.session_state.auth_flow
                     if 'auth_app' in st.session_state:
                         del st.session_state.auth_app
-                    st.rerun()
+        
+        # Check if authentication was just completed
+        if st.session_state.get('auth_completed'):
+            st.session_state.auth_completed = False  # Clear the flag
+            st.success("🎉 Authentication successful!")
+            st.success("✅ You'll stay signed in for up to 90 days!")
+            st.balloons()  # Fun celebration without rerun
         
         return False
     return True
