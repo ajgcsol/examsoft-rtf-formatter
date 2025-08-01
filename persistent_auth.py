@@ -110,18 +110,47 @@ def refresh_access_token(refresh_token):
 def get_device_flow():
     """Start device code flow for authentication"""
     try:
+        # Debug configuration loading
+        st.write("🔍 **Debug - M365 Config:**")
+        st.write(f"   Client ID: {M365_CONFIG.get('client_id', 'NOT FOUND')[:8]}...")
+        st.write(f"   Authority: {M365_CONFIG.get('authority', 'NOT FOUND')}")
+        st.write(f"   Scopes: {len(M365_CONFIG.get('scope', []))} scopes")
+        
+        if not M365_CONFIG.get('client_id'):
+            st.error("❌ Client ID not found in configuration")
+            return None, None
+            
+        if not M365_CONFIG.get('authority'):
+            st.error("❌ Authority not found in configuration")
+            return None, None
+            
+        if not M365_CONFIG.get('scope'):
+            st.error("❌ Scopes not found in configuration")
+            return None, None
+        
+        st.write("🔄 Creating MSAL PublicClientApplication...")
         app = msal.PublicClientApplication(
             M365_CONFIG['client_id'],
             authority=M365_CONFIG['authority']
         )
         
+        st.write("🔄 Initiating device flow...")
         flow = app.initiate_device_flow(scopes=M365_CONFIG['scope'])
-        if "user_code" not in flow:
-            raise ValueError(f"Failed to create device flow: {flow.get('error_description', 'Unknown error')}")
         
+        if "user_code" not in flow:
+            error_desc = flow.get('error_description', 'Unknown error')
+            st.error(f"❌ Device flow creation failed: {error_desc}")
+            st.write(f"🔍 **Debug - Flow response:** {flow}")
+            raise ValueError(f"Failed to create device flow: {error_desc}")
+        
+        st.success("✅ Device flow created successfully!")
         return app, flow
+        
     except Exception as e:
-        st.error(f"Failed to start authentication: {str(e)}")
+        st.error(f"❌ Failed to start authentication: {str(e)}")
+        st.write("🔍 **Debug - Exception details:**")
+        import traceback
+        st.code(traceback.format_exc())
         return None, None
 
 def complete_device_flow(app, flow):
@@ -225,12 +254,35 @@ def render_persistent_auth_ui():
         
         if 'auth_flow' not in st.session_state:
             if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary"):
-                with st.spinner("Starting authentication..."):
-                    app, flow = get_device_flow()
-                    if app and flow:
-                        st.session_state.auth_app = app
-                        st.session_state.auth_flow = flow
-                        st.rerun()
+                try:
+                    with st.spinner("Starting authentication..."):
+                        st.write("🔄 Checking configuration...")
+                        
+                        # Validate configuration before proceeding
+                        if not CONFIG_AVAILABLE:
+                            st.error("❌ MSAL library not available")
+                            st.stop()
+                            
+                        if not M365_CONFIG:
+                            st.error("❌ M365 configuration not loaded")
+                            st.stop()
+                        
+                        st.write("🔄 Initializing authentication flow...")
+                        app, flow = get_device_flow()
+                        
+                        if app and flow:
+                            st.session_state.auth_app = app
+                            st.session_state.auth_flow = flow
+                            st.success("✅ Authentication flow started!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to start authentication flow")
+                            
+                except Exception as e:
+                    st.error(f"❌ Authentication startup error: {str(e)}")
+                    st.write("🔍 **Debug - Full error:**")
+                    import traceback
+                    st.code(traceback.format_exc())
         else:
             # Show device code
             col1, col2 = st.columns([2, 1])
