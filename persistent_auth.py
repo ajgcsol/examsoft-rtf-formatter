@@ -221,7 +221,7 @@ def initialize_persistent_auth():
     return st.session_state.sp_authenticated
 
 def render_persistent_auth_ui():
-    """Render authentication UI with persistent login"""
+    """Render authentication UI with persistent login - BULLETPROOF VERSION"""
     
     # Initialize session state if needed
     if 'sp_authenticated' not in st.session_state:
@@ -231,136 +231,94 @@ def render_persistent_auth_ui():
     if 'sp_user_info' not in st.session_state:
         st.session_state.sp_user_info = None
     
-    # Check if we just completed authentication
-    if 'auth_just_completed' in st.session_state and st.session_state.auth_just_completed:
-        st.session_state.auth_just_completed = False
-        st.success("🎉 Authentication successful!")
-        # Show authenticated user info immediately
-        if st.session_state.sp_authenticated and st.session_state.sp_user_info:
-            render_auth_status()
+    # If already authenticated, show status
+    if st.session_state.sp_authenticated:
+        render_auth_status()
         return True
     
-    if not st.session_state.sp_authenticated:
-        st.info("🔐 **Microsoft 365 Authentication**")
-        
-        # Show authentication benefits
-        st.write("✅ **Stay signed in for up to 90 days**")
-        st.write("✅ **Automatic token refresh**")
-        st.write("✅ **Secure local storage**")
-        
-        if 'auth_flow' not in st.session_state:
-            if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary"):
-                try:
-                    with st.spinner("Starting authentication..."):
-                        # Validate configuration before proceeding (no UI calls inside spinner)
-                        if not CONFIG_AVAILABLE:
-                            raise Exception("MSAL library not available - please install msal package")
-                            
-                        if not M365_CONFIG:
-                            raise Exception("M365 configuration not loaded")
-                        
-                        # Clear any existing auth flow first
-                        if 'auth_flow' in st.session_state:
-                            del st.session_state.auth_flow
-                        if 'auth_app' in st.session_state:
-                            del st.session_state.auth_app
-                        
-                        # Initialize authentication flow
-                        app, flow = get_device_flow()
-                        
-                        if app and flow and 'user_code' in flow:
-                            st.session_state.auth_app = app
-                            st.session_state.auth_flow = flow
-                            # Don't use st.rerun() - let natural page refresh handle the state change
-                        else:
-                            error_detail = flow.get('error_description', 'Unknown error') if flow else 'No response from authentication service'
-                            raise Exception(f"Failed to start authentication flow: {error_detail}")
-                            
-                except Exception as e:
-                    # Show error after spinner closes
-                    st.error(f"❌ Authentication startup error: {str(e)}")
-                    # Optional: Show detailed error for debugging
-                    with st.expander("🔍 Debug Details"):
-                        import traceback
-                        st.code(traceback.format_exc())
-                        if M365_CONFIG:
-                            st.write("**Configuration:**")
-                            st.json({
-                                "client_id": M365_CONFIG.get('client_id', 'MISSING'),
-                                "authority": M365_CONFIG.get('authority', 'MISSING'),
-                                "scopes": M365_CONFIG.get('scope', 'MISSING')
-                            })
-        
-        # Show device code if auth flow exists
-        elif 'auth_flow' in st.session_state and st.session_state.auth_flow:
-            flow = st.session_state.auth_flow
-            
-            # Check if flow has required data
-            if 'user_code' in flow and 'verification_uri' in flow:
-                # Show device code
-                st.success("🎯 **Authentication Code Ready!**")
+    # Not authenticated - show sign in UI
+    st.info("🔐 **Microsoft 365 Authentication**")
+    st.write("Sign in to upload files to SharePoint")
+    
+    # Initialize auth step
+    if 'auth_step' not in st.session_state:
+        st.session_state.auth_step = 'start'
+    
+    # Step 1: Get device code
+    if st.session_state.auth_step == 'start':
+        if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary"):
+            try:
+                # Validate configuration
+                if not CONFIG_AVAILABLE or not M365_CONFIG:
+                    st.error("❌ Configuration error - MSAL or M365 config not available")
+                    return False
                 
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.info(f"**Visit:** {flow['verification_uri']}")
-                    st.code(flow['user_code'], language=None)
-                    st.write("💡 This code expires in 15 minutes")
-                    st.write("🔗 Click the link above, then enter the code")
+                # Get device flow
+                app, flow = get_device_flow()
+                
+                if app and flow and 'user_code' in flow:
+                    # Store in session state
+                    st.session_state.auth_app = app
+                    st.session_state.auth_flow = flow
+                    st.session_state.auth_step = 'show_code'
+                else:
+                    st.error("❌ Failed to create authentication flow")
                     
-                with col2:
-                    if st.button("✅ Complete Sign In", use_container_width=True, type="primary"):
-                        with st.spinner("Completing authentication..."):
-                            result = complete_device_flow(st.session_state.auth_app, st.session_state.auth_flow)
-                            if result and 'access_token' in result:
-                                # Save to cache for persistent authentication
-                                save_token_to_cache(result)
-                                
-                                # Set session state
-                                st.session_state.sp_access_token = result['access_token']
-                                st.session_state.access_token = result['access_token']
-                                st.session_state.sharepoint_access_token = result['access_token']
-                                st.session_state.sp_authenticated = True
-                                st.session_state.sp_user_info = get_user_info(result['access_token'])
-                                st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=result.get('expires_in', 3600))).isoformat()
-                                st.session_state.refresh_token = result.get('refresh_token')
-                                
-                                # Clear auth flow
-                                if 'auth_flow' in st.session_state:
-                                    del st.session_state.auth_flow
-                                if 'auth_app' in st.session_state:
-                                    del st.session_state.auth_app
-                                
-                                # Set flag for next render to show success message
-                                st.session_state.auth_just_completed = True
-                                
-                                # Don't use st.rerun() - let the next page load show the authenticated state
-                            else:
-                                if 'auth_flow' in st.session_state:
-                                    del st.session_state.auth_flow
-                                st.error("❌ Authentication failed. Please try again.")
-                    
-                    # Cancel button
-                    if st.button("❌ Cancel", use_container_width=True):
-                        if 'auth_flow' in st.session_state:
-                            del st.session_state.auth_flow
+            except Exception as e:
+                st.error(f"❌ Authentication error: {str(e)}")
+    
+    # Step 2: Show device code and completion button
+    elif st.session_state.auth_step == 'show_code':
+        flow = st.session_state.auth_flow
+        app = st.session_state.auth_app
+        
+        st.success("🎯 **Authentication Code Ready!**")
+        st.info(f"**Visit:** {flow['verification_uri']}")
+        st.code(flow['user_code'], language=None)
+        st.write("1. Click the link above")
+        st.write("2. Enter the code")
+        st.write("3. Sign in with your account")
+        st.write("4. Come back and click Complete Sign In")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("✅ Complete Sign In", use_container_width=True, type="primary"):
+                with st.spinner("Completing authentication..."):
+                    result = complete_device_flow(app, flow)
+                    if result and 'access_token' in result:
+                        # Save to cache
+                        save_token_to_cache(result)
+                        
+                        # Set session state
+                        st.session_state.sp_access_token = result['access_token']
+                        st.session_state.access_token = result['access_token']
+                        st.session_state.sharepoint_access_token = result['access_token']
+                        st.session_state.sp_authenticated = True
+                        st.session_state.sp_user_info = get_user_info(result['access_token'])
+                        st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=result.get('expires_in', 3600))).isoformat()
+                        
+                        # Clean up
+                        st.session_state.auth_step = 'start'
                         if 'auth_app' in st.session_state:
                             del st.session_state.auth_app
-                        # Don't use st.rerun() - let the next interaction handle the state change
-            else:
-                # Invalid flow data
-                st.error("❌ Authentication flow data is invalid")
-                if 'auth_flow' in st.session_state:
-                    del st.session_state.auth_flow
+                        if 'auth_flow' in st.session_state:
+                            del st.session_state.auth_flow
+                        
+                        st.success("🎉 Authentication successful!")
+                        return True
+                    else:
+                        st.error("❌ Authentication failed. Make sure you completed the sign-in process.")
+        
+        with col2:
+            if st.button("❌ Cancel", use_container_width=True):
+                st.session_state.auth_step = 'start'
                 if 'auth_app' in st.session_state:
                     del st.session_state.auth_app
-        
-        return False
+                if 'auth_flow' in st.session_state:
+                    del st.session_state.auth_flow
     
-    # User is authenticated, show user info
-    if st.session_state.sp_authenticated and st.session_state.sp_user_info:
-        render_auth_status()
-    
-    return True
+    return False
 
 def render_auth_status():
     """Render authentication status with expiration info"""
