@@ -1,0 +1,8 @@
+﻿{
+    "azure_endpoint": "http://4.156.115.147:5000",
+    "resource_group": "CSOLIT",
+    "container_name": "examsoft-converter",
+    "acr_name": "examsoftacr3480",
+    "deployment_date": "2025-08-01 14:50:00",
+    "status": "deployed"
+}

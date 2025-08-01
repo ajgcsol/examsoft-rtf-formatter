@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.venv_new/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config files
+local_config.py
+config_local.py
+
+# Test files and temp data
+test_*.py
+temp_*
+*.tmp
+
+# Microsoft Office temp files
+~$*
+
+# Sensitive files
+*secret*
+*key*
+*token*
+*.env
+
+# Application specific
+formatted_exam-*.rtf
+ExamFormatExport-*.docx
