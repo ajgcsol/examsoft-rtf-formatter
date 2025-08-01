@@ -110,10 +110,16 @@ def test_converter_endpoint(endpoint_url):
     try:
         # Test with a simple GET request to the base URL (remove /convert)
         base_url = endpoint_url.replace('/convert', '')
-        response = requests.get(base_url, timeout=10)
+        response = requests.get(base_url, timeout=5)  # Reduced timeout
         return True, f"Endpoint responding with status: {response.status_code}"
+    except requests.exceptions.Timeout:
+        return False, "Request timed out - endpoint may be slow or unavailable"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection error - endpoint may be down or unreachable"
     except requests.exceptions.RequestException as e:
-        return False, f"Endpoint unavailable: {str(e)}"
+        return False, f"Request failed: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
 
 def show_azure_status():
     """Display Azure configuration status in Streamlit"""
@@ -130,12 +136,16 @@ def show_azure_status():
         with col2:
             # Quick health check button
             if st.button("🔍 Test", help="Test Azure endpoint"):
-                with st.spinner("Testing..."):
-                    is_available, message = test_converter_endpoint(config['AZURE_CONVERTER_ENDPOINT'])
-                    if is_available:
-                        st.success("✅ Online")
-                    else:
-                        st.error("❌ Offline")
+                try:
+                    with st.spinner("Testing endpoint..."):
+                        is_available, message = test_converter_endpoint(config['AZURE_CONVERTER_ENDPOINT'])
+                        if is_available:
+                            st.success("✅ Online")
+                        else:
+                            st.error(f"❌ {message}")
+                except Exception as e:
+                    st.error(f"❌ Test failed: {str(e)}")
+                    st.write("This error won't affect the main app functionality.")
     else:
         st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")
 

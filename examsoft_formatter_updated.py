@@ -46,15 +46,15 @@ try:
     # Direct upload function with correct path
     def upload_to_sharepoint_corrected(access_token, file_content, filename):
         """Upload to correct SharePoint path: Exam Procedures/ExamSoft/Import with robust error handling"""
-        import requests
-        from urllib.parse import quote
-        import re
-        
-        print("🔧 Using ROBUST upload function with enhanced debugging!")
-        
-        site_id = "charlestonlaw.sharepoint.com,ba0b6d09-2f32-4ccf-a24d-9a41e9be4a6a,ffe7f195-f2eb-4f68-af47-35a01fa9a2d7"
-        
         try:
+            import requests
+            from urllib.parse import quote
+            import re
+            
+            print("🔧 Using ROBUST upload function with enhanced debugging!")
+            
+            site_id = "charlestonlaw.sharepoint.com,ba0b6d09-2f32-4ccf-a24d-9a41e9be4a6a,ffe7f195-f2eb-4f68-af47-35a01fa9a2d7"
+            
             # Step 1: Clean and validate filename
             # Remove invalid characters that might cause 400 errors
             clean_filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)
@@ -332,6 +332,10 @@ try:
         except Exception as e:
             print(f"❌ Upload session error: {str(e)}")
             return False, f"Upload session error: {str(e)}"
+        
+        except Exception as upload_error:
+            print(f"❌ SharePoint upload function error: {str(upload_error)}")
+            return False, f"Upload function error: {str(upload_error)}"
             
 except ImportError:
     SHAREPOINT_INTEGRATION_AVAILABLE = False
@@ -808,9 +812,7 @@ def create_rtf_content(questions_list, answer_key=None, use_answer_key_method=Fa
     return rtf_header + rtf_body + "}"
 
 
-
-
-# Streamlit UI (pasted input version, reordered)
+# Main Streamlit UI
 st.subheader("Charleston School of Law")
 st.header("ExamSoft RTF Formatter")
 st.write("Paste your instructions, exam questions, and answer key below. No file upload needed.")
@@ -840,11 +842,13 @@ if SHAREPOINT_INTEGRATION_AVAILABLE:
 
 # Show Azure/Docker endpoint status
 if AZURE_CONFIG_AVAILABLE:
-    show_azure_status()
+    try:
+        show_azure_status()
+    except Exception as e:
+        st.error(f"Azure config error: {e}")
+        st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")
 else:
-    st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")
-
-# File naming inputs
+    st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")# File naming inputs
 col1, col2, col3 = st.columns(3)
 with col1:
     course_input = st.text_input("Course", placeholder="e.g., CONST", help="Course abbreviation for filename")
