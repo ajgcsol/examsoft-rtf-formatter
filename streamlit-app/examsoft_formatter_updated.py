@@ -104,22 +104,52 @@ try:
         
         encoded_filename = quote(filename)
         
-        # Try different upload methods - the issue might be with the API endpoint format
+        # Test multiple path variations to find the right one
+        test_paths = [
+            'Exam%20Procedures/ExamSoft/Import/',  # URL encoded
+            'Exam Procedures/ExamSoft/Import/',    # Normal spaces
+            'Exam%2520Procedures/ExamSoft/Import/' # Double encoded
+        ]
+        
+        print(f"🔍 Testing which path format works...")
+        working_path = None
+        
+        for test_path in test_paths:
+            test_url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{test_path}"
+            headers = {'Authorization': f'Bearer {access_token}'}
+            
+            try:
+                response = requests.get(test_url, headers=headers)
+                print(f"   Testing '{test_path}': {response.status_code}")
+                if response.status_code == 200:
+                    working_path = test_path
+                    print(f"   ✅ Found working path: {test_path}")
+                    break
+            except Exception as e:
+                print(f"   Error testing '{test_path}': {e}")
+        
+        if not working_path:
+            print(f"❌ No working path found, using fallback")
+            working_path = 'Exam%20Procedures/ExamSoft/Import/'
+        
+        target_path = working_path
+        print(f"🎯 Using path: {target_path}")
+        
         upload_methods = [
             {
                 'name': 'Standard Path API',
                 'url_template': 'https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{path}{filename}:/content',
-                'paths': ['Exam%20Procedures/ExamSoft/Import/', 'ExamSoft/Import/', 'Import/', '']
+                'paths': [target_path]
             },
             {
                 'name': 'Items API (no colons)',
                 'url_template': 'https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/root:/{path}{filename}:/content',
-                'paths': ['Exam%20Procedures/ExamSoft/Import/', 'ExamSoft/Import/', 'Import/', '']
+                'paths': [target_path]
             },
             {
                 'name': 'Direct Drive API',
                 'url_template': 'https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{path}{filename}:/content',
-                'paths': ['Exam%20Procedures/ExamSoft/Import/', 'ExamSoft/Import/', 'Import/', ''],
+                'paths': [target_path],
                 'needs_drive_id': True
             }
         ]
@@ -181,16 +211,22 @@ try:
                     if response.status_code in [200, 201]:
                         response_data = response.json()
                         file_url = response_data.get('webUrl', 'URL not available')
+                        parent_reference = response_data.get('parentReference', {})
+                        actual_path = parent_reference.get('path', 'Unknown path')
                         
                         print(f"✅ SUCCESS with {method['name']}!")
-                        print(f"✅ Path: {path}")
+                        print(f"✅ Requested Path: {path}")
+                        print(f"✅ Actual Path: {actual_path}")
                         print(f"🔗 File URL: {file_url}")
+                        print(f"📂 Full response path info: {parent_reference}")
                         
                         return True, {
                             'url': file_url,
+                            'actual_path': actual_path,
+                            'requested_path': path,
                             'size': response_data.get('size', 0),
                             'created': response_data.get('createdDateTime', 'N/A'),
-                            'message': f'Successfully uploaded using {method["name"]} to {path or "root"}'
+                            'message': f'Successfully uploaded using {method["name"]} to {actual_path}'
                         }
                     elif response.status_code == 400:
                         try:
@@ -694,6 +730,63 @@ def generate_instructions_docx(instructions_text):
     doc_bytes.seek(0)
     return doc_bytes.getvalue()
 
+def parse_answer_key_with_header_detection(answer_key_text):
+    """Parse answer key and detect/skip headers"""
+    if not answer_key_text.strip():
+        return []
+    
+    lines = [line.strip() for line in answer_key_text.strip().splitlines() if line.strip()]
+    
+    # Common header patterns to skip - be more specific to avoid filtering actual answers
+    header_patterns = [
+        r'^(answer\s*key|correct\s*answers?|solutions?|exam\s*answers?)$',  # "Answer Key", "Correct Answers", etc.
+        r'^(question\s*#?\s*answer|question\s*answer)$',  # "Question Answer", etc. (removed plain "answer")
+        r'^(q\s*a|question\s*answer)$',  # "Q A", "Question Answer"
+        r'^\d+\.\s*[a-z]\s*$',  # Skip numbered headers like "1. A" 
+        r'^[a-z]\s+[a-z]\s+[a-z]',  # Skip multiple letters with spaces (likely column headers like "A B C")
+        r'^(professor|course|class|exam|final|midterm|test)',  # Course/exam info
+        r'^(name|date|student|id)',  # Student info headers
+        r'^\s*[-=_]+\s*$',  # Separator lines
+        r'^(question|q)$',  # Just "Question" or "Q"
+        r'^(#|number|num)$',  # Just "#", "Number", "Num"
+    ]
+    
+    answer_lines = []
+    for line in lines:
+        line_lower = line.lower()
+        
+        # Skip if matches any header pattern
+        is_header = False
+        for pattern in header_patterns:
+            if re.match(pattern, line_lower):
+                is_header = True
+                break
+        
+        if not is_header:
+            # Try to extract just the answer letter if line has extra formatting
+            # Handle formats like "1. A", "Q1: B", "1) C", etc.
+            answer_match = re.search(r'[a-zA-Z]', line)
+            if answer_match:
+                answer_letter = answer_match.group().upper()
+                # Validate it's a reasonable answer (A-Z)
+                if answer_letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                    answer_lines.append(answer_letter)
+    
+    # Additional validation and debugging
+    import streamlit as st
+    if len(answer_lines) < 5:
+        st.warning(f"⚠️ Only found {len(answer_lines)} answers in the answer key. Please check that the first column contains your answer letters.")
+    else:
+        st.success(f"✅ Found {len(answer_lines)} answers in the answer key")
+        
+    # Debug: show the actual lines we processed
+    if len(lines) > 0:
+        st.info(f"📝 Processed {len(lines)} total lines from answer key file")
+        if len(lines) != len(answer_lines):
+            st.info(f"ℹ️ Some lines were filtered out. Raw lines: {len(lines)}, Valid answers: {len(answer_lines)}")
+    
+    return answer_lines
+
 def parse_questions_from_text(questions_text, answer_key, use_asterisk_method=True):
     """Parse questions from the text and format for ExamSoft"""
     formatted_questions = []
@@ -812,382 +905,407 @@ def create_rtf_content(questions_list, answer_key=None, use_answer_key_method=Fa
     return rtf_header + rtf_body + "}"
 
 
-# Main Streamlit UI
-st.subheader("Charleston School of Law")
-st.header("ExamSoft RTF Formatter")
-st.write("Paste your instructions, exam questions, and answer key below. No file upload needed.")
+def main():
+    """Main Streamlit application function"""
+    # Main Streamlit UI
+    st.subheader("Charleston School of Law")
+    st.header("ExamSoft RTF Formatter")
+    st.write("Paste your instructions, exam questions, and answer key below. No file upload needed.")
 
-# Initialize SharePoint authentication safely - only once per session
-def initialize_authentication():
-    """Initialize authentication safely without causing crashes on input"""
-    if SHAREPOINT_INTEGRATION_AVAILABLE:
-        try:
-            # Only initialize if not already done
-            if 'auth_initialized' not in st.session_state:
-                initialize_persistent_auth()
-                st.session_state.auth_initialized = True
-                
-            # Show authentication status in sidebar
-            with st.sidebar:
-                st.header("🔐 Microsoft 365")
-                
-                # Always show the authentication UI - it handles both signed in and signed out states
-                is_authenticated = render_persistent_auth_ui()
-                
-                # If user is authenticated, also show additional status and sign out
-                if is_authenticated:
-                    render_auth_status()
+    # Initialize SharePoint authentication safely - only once per session
+    def initialize_authentication():
+        """Initialize authentication safely without causing crashes on input"""
+        if SHAREPOINT_INTEGRATION_AVAILABLE:
+            try:
+                # Only initialize if not already done
+                if 'auth_initialized' not in st.session_state:
+                    initialize_persistent_auth()
+                    st.session_state.auth_initialized = True
                     
-                    # Add sign out button in sidebar too
-                    if st.button("🔓 Sign Out", key="sidebar_signout"):
-                        if sign_out_persistent():
-                            st.success("👋 Signed out!")
-                            # Don't use st.rerun() - let natural refresh handle it
+                # Show authentication status in sidebar
+                with st.sidebar:
+                    st.header("🔐 Microsoft 365")
                     
-        except Exception as e:
-            st.sidebar.error(f"Auth error: {e}")
+                    # Always show the authentication UI - it handles both signed in and signed out states
+                    is_authenticated = render_persistent_auth_ui()
+                    
+                    # If user is authenticated, also show additional status and sign out
+                    if is_authenticated:
+                        render_auth_status()
+                        
+                        # Add sign out button in sidebar too
+                        if st.button("🔓 Sign Out", key="sidebar_signout"):
+                            if sign_out_persistent():
+                                st.success("👋 Signed out!")
+                                st.rerun()
+                        
+            except Exception as e:
+                st.sidebar.error(f"Auth error: {e}")
+                import traceback
+                st.sidebar.code(traceback.format_exc())
 
-# Call authentication initialization
-initialize_authentication()
-
-# Show Azure/Docker endpoint status
-if AZURE_CONFIG_AVAILABLE:
+    # Call authentication initialization - wrap in try/catch to prevent crashes
     try:
-        show_azure_status()
+        initialize_authentication()
     except Exception as e:
-        st.error(f"Azure config error: {e}")
+        st.sidebar.error(f"Authentication initialization failed: {e}")
+
+    # Show Azure/Docker endpoint status
+    if AZURE_CONFIG_AVAILABLE:
+        try:
+            show_azure_status()
+        except Exception as e:
+            st.error(f"Azure config error: {e}")
+            st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")
+    else:
         st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")
-else:
-    st.info("🏠 **Using Local Docker Endpoint** - Deploy to Azure for cloud conversion service")# File naming inputs
-col1, col2, col3 = st.columns(3)
-with col1:
-    course_input = st.text_input("Course", placeholder="e.g., CONST", help="Course abbreviation for filename")
-with col2:
-    section_input = st.text_input("Section", placeholder="e.g., 001", help="Section number for filename")
-with col3:
-    professor_input = st.text_input("Professor Last Name", placeholder="e.g., Smith", help="Professor's last name for filename")
-
-st.subheader("Instructions (Optional)")
-instructions_input = st.text_area("Paste Instructions", height=150, help="Optional: Paste or type the exam instructions. Leave blank if not needed.", placeholder="Instructions are optional - you can leave this blank if you only need to format questions.")
-
-st.subheader("Exam Questions (Required - Paste all questions, including numbering and choices)")
-questions_input = st.text_area("Paste Exam Questions", height=400, help="Paste all exam questions as plain text, including numbering and answer choices.")
-
-st.subheader("Answer Key (Paste column from Excel, one answer per line, e.g. A B C D ...)")
-answer_key_input = st.text_area("Paste Answer Key", height=150, help="Paste a single column of answers (A, B, C, D, etc.) from Excel or CSV. One per line.")
-
-st.subheader("Answer Key Method")
-answer_method = st.radio(
-    "How would you like to handle answer keys?",
-    ("Asterisk Method (mark correct answers with * in questions)", 
-     "Answer Key Section (add separate answer list at end)"),
-    help="ExamSoft supports both methods. Asterisk method marks correct answers directly in questions. Answer Key section adds a separate list at the end."
-)
-use_asterisk_method = answer_method.startswith("Asterisk")
-
-# Initialize session state
-if 'processed_data' not in st.session_state:
-    st.session_state.processed_data = None
-
-if st.button("Process Data"):
-    if not questions_input.strip():
-        st.error("Exam questions are required. Please paste your questions above.")
-    else:
-        # Parse answer key and clean encoding
-        answer_key = [clean_text_encoding(a.strip()) for a in answer_key_input.strip().splitlines() if a.strip()]
-        st.write(f"Answer key loaded: {len(answer_key)} answers")
-        st.write(f"Using: {answer_method}")
-        
-        # Generate filenames based on course, section, and professor inputs
-        instructions_filename = generate_filename(course_input, section_input, professor_input, "ins", "docx")
-        exam_filename = generate_filename(course_input, section_input, professor_input, "exm", "rtf")
-        
-        # Use pasted instructions and questions, clean encoding
-        instructions_text = clean_text_encoding(instructions_input.strip()) if instructions_input.strip() else ""
-        questions_text = questions_input.strip()
-        
-        # Parse and format questions
-        questions_list = parse_questions_from_text(questions_text, answer_key, use_asterisk_method)
-        
-        if questions_list:
-            # Validation: count MC questions and compare to answer key
-            mc_count = sum(1 for q in questions_list if not q.startswith("Type: E"))
-            essay_count = sum(1 for q in questions_list if q.startswith("Type: E"))
-            if mc_count != len(answer_key):
-                st.warning(f"Warning: Found {mc_count} multiple choice questions but {len(answer_key)} answers in the answer key. Please check for missing or extra answers.")
-            
-            # Create downloadable files
-            exam_rtf_content = None
-            exam_rtf_bytes = None
-            instructions_docx = None
-            
-            # Generate instructions if provided
-            if instructions_text:
-                instructions_docx = generate_instructions_docx(instructions_text)
-            
-            # Generate exam RTF
-            exam_rtf_content = create_rtf_content(
-                questions_list, 
-                answer_key if not use_asterisk_method else None, 
-                not use_asterisk_method
-            )
-            
-            # Try LibreOffice Docker/Azure API conversion for best quality
-            with tempfile.TemporaryDirectory() as tmpdir:
-                docx_path = os.path.join(tmpdir, "ExamSoft_Export.docx")
-                rtf_path = os.path.join(tmpdir, "ExamSoft_Export.rtf")
-                generate_docx_with_questions(questions_list, '', docx_path)
-                
-                try:
-                    # Use Docker/Flask API for conversion (Azure or local)
-                    api_endpoint = get_converter_endpoint()
-                    convert_docx_to_rtf_via_api(docx_path, rtf_path, api_url=api_endpoint)
-                    with open(rtf_path, "rb") as f:
-                        exam_rtf_bytes = f.read()
-                    
-                    # Show success message based on endpoint type
-                    if is_using_azure() if AZURE_CONFIG_AVAILABLE else False:
-                        st.success("✅ RTF generated using Azure LibreOffice API with clean encoding and best formatting fidelity.")
-                    else:
-                        st.success("✅ RTF generated using local LibreOffice Docker API with clean encoding and best formatting fidelity.")
-                except Exception as e:
-                    endpoint_type = "Azure" if (is_using_azure() if AZURE_CONFIG_AVAILABLE else False) else "local Docker"
-                    st.error(f"❌ LibreOffice {endpoint_type} API conversion failed: {e}")
-                    if not (is_using_azure() if AZURE_CONFIG_AVAILABLE else False):
-                        st.info("💡 Make sure the Docker container is running on localhost:8080")
-                        st.info("🌤️ Or deploy to Azure using the deployment script for better reliability")
-                    st.info("🔄 Using basic RTF conversion as fallback.")
-            
-            # Store processed data in session state
-            st.session_state.processed_data = {
-                'instructions_text': instructions_text,
-                'instructions_docx': instructions_docx,
-                'instructions_filename': instructions_filename,
-                'questions_list': questions_list,
-                'exam_rtf_content': exam_rtf_content,
-                'exam_rtf_bytes': exam_rtf_bytes,
-                'exam_filename': exam_filename,
-                'mc_count': mc_count,
-                'essay_count': essay_count,
-                'answer_key': answer_key,
-                'use_asterisk_method': use_asterisk_method
-            }
-            
-            st.success(f"Processed {len(questions_list)} questions successfully!")
-            st.info(f"Found {mc_count} multiple choice questions and {essay_count} essay questions")
-            
-            # Show answer key info
-            if use_asterisk_method:
-                asterisk_count = sum(1 for q in questions_list for line in q.split('\n') if line.startswith('*'))
-                st.info(f"Marked {asterisk_count} correct answers with asterisks")
-            else:
-                st.info(f"Answer key section with {len(answer_key)} answers will be added at the end")
-        else:
-            st.error("No questions were found or formatted")
-            st.write("Debug - Raw exam questions preview:")
-            st.text(questions_text[:1000])
-
-# Display download options if data has been processed
-if st.session_state.processed_data:
-    data = st.session_state.processed_data
     
-    st.markdown("---")
-    st.subheader("Download Files")
-    
-    # Display preview
-    if data['instructions_text']:
-        st.subheader("Instructions Preview")
-        st.text(data['instructions_text'][:500] + "..." if len(data['instructions_text']) > 500 else data['instructions_text'])
-    
-    st.subheader("Questions Preview (First 3)")
-    for i, q in enumerate(data['questions_list'][:3]):
-        st.text(q[:200] + "..." if len(q) > 200 else q)
-        st.markdown("---")
-    
-    # Download checkboxes and buttons
-    st.subheader("Select Files to Download")
-    
-    col1, col2 = st.columns(2)
-    
+    # File naming inputs
+    col1, col2, col3 = st.columns(3)
     with col1:
-        if data['instructions_docx']:
-            download_instructions = st.checkbox("📄 Download Instructions (DOCX)", value=True)
-            if download_instructions:
-                st.download_button(
-                    label="📄 Download Instructions",
-                    data=data['instructions_docx'],
-                    file_name=data['instructions_filename'],
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True
-                )
-        else:
-            st.info("No instructions to download (none were provided)")
-    
+        course_input = st.text_input("Course", placeholder="e.g., CONST", help="Course abbreviation for filename")
     with col2:
-        download_exam = st.checkbox("📝 Download Exam (RTF)", value=True)
-        if download_exam:
-            # Use Docker API version if available, otherwise fallback to basic
-            if data['exam_rtf_bytes']:
-                st.download_button(
-                    label="📝 Download Exam (LibreOffice API)",
-                    data=data['exam_rtf_bytes'],
-                    file_name=data['exam_filename'],
-                    mime="text/rtf",
-                    use_container_width=True
-                )
-            else:
-                st.download_button(
-                    label="📝 Download Exam (Basic RTF)",
-                    data=data['exam_rtf_content'],
-                    file_name=data['exam_filename'],
-                    mime="text/rtf",
-                    use_container_width=True
-                )
-    
-    # SharePoint Upload Section  
-    if SHAREPOINT_INTEGRATION_AVAILABLE:
-        st.markdown("---")
-        st.subheader("📤 Upload to SharePoint (Optional)")
-        
-        # Check if user is authenticated (persistent auth handles token validation)
-        is_authenticated = (
-            st.session_state.get('sp_access_token') or 
-            st.session_state.get('access_token') or 
-            st.session_state.get('sharepoint_access_token')
-        )
-        
-        if is_authenticated:
-            # Show upload options
-            st.write("✅ **Ready to upload!** Select files to upload to SharePoint:")
-            
-            upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint") if data['instructions_docx'] else False
-            upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True)
-            
-            if st.button("🚀 Upload to SharePoint", use_container_width=True):
-                try:
-                    with st.spinner("Uploading to SharePoint..."):
-                        access_token = (
-                            st.session_state.get('sp_access_token') or 
-                            st.session_state.get('access_token') or 
-                            st.session_state.get('sharepoint_access_token')
-                        )
-                        
-                        upload_results = []
-                        
-                        # Upload instructions if selected
-                        if upload_instructions_sp and data['instructions_docx']:
-                            success, result = upload_to_sharepoint_corrected(
-                                access_token, 
-                                data['instructions_docx'], 
-                                data['instructions_filename']
-                            )
-                            upload_results.append(("Instructions", success, result))
-                        
-                        # Upload exam if selected
-                        if upload_exam_sp:
-                            # Debug: Show what keys are available
-                            st.write("🔍 **Debug - Available data keys:**", list(data.keys()))
-                            
-                            # Use the correct RTF content key
-                            rtf_content = data.get('exam_rtf_bytes') or data.get('exam_rtf_content')
-                            
-                            # Debug: Show what we found
-                            st.write(f"🔍 **Debug - RTF content type:** {type(rtf_content)}")
-                            st.write(f"🔍 **Debug - RTF content size:** {len(rtf_content) if rtf_content and hasattr(rtf_content, '__len__') else 'N/A'}")
-                            
-                            if rtf_content:
-                                success, result = upload_to_sharepoint_corrected(
-                                    access_token, 
-                                    rtf_content, 
-                                    data['exam_filename']
-                                )
-                                upload_results.append(("Exam", success, result))
-                            else:
-                                upload_results.append(("Exam", False, "No RTF content available"))
-                        
-                        # Show results
-                        for file_type, success, result in upload_results:
-                            if success:
-                                st.success(f"✅ {file_type} uploaded successfully!")
-                                if isinstance(result, dict) and 'url' in result:
-                                    st.write(f"📁 **Uploaded to:** Exam Procedures / ExamSoft / Import")
-                                    st.write(f"🔗 **File URL:** {result['url']}")
-                                    if 'size' in result:
-                                        st.write(f"📊 **Size:** {result['size']} bytes")
-                            else:
-                                st.error(f"❌ Failed to upload {file_type}: {result}")
-                        
-                        if all(success for _, success, _ in upload_results):
-                            st.balloons()
-                            st.success("🎉 All files uploaded successfully to **Exam Procedures / ExamSoft / Import**!")
-                        
-                except Exception as e:
-                    st.error(f"Upload error: {str(e)}")
-        else:
-            st.info("🔐 **Sign in with Microsoft 365** in the sidebar to upload to SharePoint")
-            st.write("Your authentication will persist for up to 90 days!")
-    else:
-        st.markdown("---")
-        st.subheader("📤 Upload to SharePoint (Optional)")
-        st.warning("⚠️ SharePoint functionality not available.")
-        st.write("Please ensure the `sharepoint_integration.py` module is available.")
-        with st.expander("SharePoint Upload Settings", expanded=False):
-            st.write("🔐 **Secure Microsoft 365 Authentication**")
-            st.write("Sign in with your Charleston School of Law Microsoft 365 account to upload files securely.")
-            
-            # Note about app registration
-            st.info("📋 **IT Setup Required**: This feature requires app registration in your Microsoft 365 tenant. Contact IT to configure the client ID and permissions.")
-            
-            # For now, show configuration fields that IT would need to set up
-            st.write("**Required IT Configuration:**")
-            st.code(f"""
-App Registration Settings:
-- Client ID: {M365_CONFIG['client_id']}
-- Tenant: {M365_CONFIG['tenant_id']}
-- Redirect URI: {M365_CONFIG['redirect_uri']}
-- Required Permissions:
-  • Sites.ReadWrite.All
-  • Files.ReadWrite.All
-            """)
-            
-            # Direct users to the real authentication in the sidebar
-            st.info("🔐 **To enable SharePoint upload:** Use the Microsoft 365 sign-in button in the sidebar →")
-            st.write("Once configured, you will be able to:")
-            st.write("• Sign in securely with your Microsoft 365 account")
-            st.write("• Upload files directly to SharePoint")
-            st.write("• Stay signed in for up to 90 days")
-            
-            # Mock interface to show what it would look like when working
-            st.write("---")
-            st.write("**Preview of Full SharePoint Integration** (once IT setup is complete):")
-            
-            # Upload checkboxes (currently disabled)
-            upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint", disabled=True) if data['instructions_docx'] else False
-            upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True, disabled=True)
-            
-            st.button("🚀 Upload to SharePoint", disabled=True, help="Requires Microsoft 365 app registration")
-    
-    # Action buttons after processing
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        if st.button("🔄 Convert Another Exam", use_container_width=True, help="Clear form and start over"):
-            # Clear all processed data and form inputs
-            st.session_state.processed_data = None
-            # Clear form session state if it exists
-            for key in list(st.session_state.keys()):
-                if key.startswith('form_') or key in ['course_input', 'section_input', 'professor_input']:
-                    del st.session_state[key]
-            st.success("📝 Form cleared! Ready for next exam.")
-            # Don't use st.rerun() - let natural refresh handle it
-    
+        section_input = st.text_input("Section", placeholder="e.g., 001", help="Section number for filename")
     with col3:
-        st.write("") # Spacer
+        professor_input = st.text_input("Professor Last Name", placeholder="e.g., Smith", help="Professor's last name for filename")
 
+    st.subheader("Instructions (Optional)")
+    instructions_input = st.text_area("Paste Instructions", height=150, help="Optional: Paste or type the exam instructions. Leave blank if not needed.", placeholder="Instructions are optional - you can leave this blank if you only need to format questions.")
+
+    st.subheader("Exam Questions (Required - Paste all questions, including numbering and choices)")
+    questions_input = st.text_area("Paste Exam Questions", height=400, help="Paste all exam questions as plain text, including numbering and answer choices.")
+
+    # Rest of the UI code would go here, but we're using streamlit_app_fixed.py instead
+    st.info("This is the original main function - use streamlit_app_fixed.py for the working version")
+
+# Only run the main function if this file is executed directly  
+if __name__ == "__main__":
+    main()
+
+# Prevent UI execution during import for safe_formatter
+import os
+if os.environ.get('STREAMLIT_IMPORT_ONLY') == '1':
+    # Skip all UI code when imported by safe_formatter
+    pass
 else:
-    st.info("Paste your exam questions and answer key above, then click 'Process Data'. Instructions are optional.")
+    # Normal execution - but we've already put UI code in main() function or commented it out
+    pass
 
-
-# This file contains the main Streamlit UI code
-# The UI runs immediately when imported
+# st.subheader("Answer Key Method")
+# answer_method = st.radio(
+#     "How would you like to handle answer keys?",
+#     ("Asterisk Method (mark correct answers with * in questions)", 
+#      "Answer Key Section (add separate answer list at end)"),
+#     help="ExamSoft supports both methods. Asterisk method marks correct answers directly in questions. Answer Key section adds a separate list at the end."
+# )
+# use_asterisk_method = answer_method.startswith("Asterisk")
+# 
+# # Initialize session state
+# if 'processed_data' not in st.session_state:
+#     st.session_state.processed_data = None
+# 
+# if st.button("Process Data", key="process_data_btn"):
+#     if not questions_input.strip():
+#         st.error("Exam questions are required. Please paste your questions above.")
+#     else:
+#         # Parse answer key and clean encoding
+#         answer_key = [clean_text_encoding(a.strip()) for a in answer_key_input.strip().splitlines() if a.strip()]
+#         st.write(f"Answer key loaded: {len(answer_key)} answers")
+#         st.write(f"Using: {answer_method}")
+#         
+#         # Generate filenames based on course, section, and professor inputs
+#         instructions_filename = generate_filename(course_input, section_input, professor_input, "ins", "docx")
+#         exam_filename = generate_filename(course_input, section_input, professor_input, "exm", "rtf")
+#         
+#         # Use pasted instructions and questions, clean encoding
+#         instructions_text = clean_text_encoding(instructions_input.strip()) if instructions_input.strip() else ""
+#         questions_text = questions_input.strip()
+#         
+#         # Parse and format questions
+#         questions_list = parse_questions_from_text(questions_text, answer_key, use_asterisk_method)
+#         
+#         if questions_list:
+#             # Validation: count MC questions and compare to answer key
+#             mc_count = sum(1 for q in questions_list if not q.startswith("Type: E"))
+#             essay_count = sum(1 for q in questions_list if q.startswith("Type: E"))
+#             if mc_count != len(answer_key):
+#                 st.warning(f"Warning: Found {mc_count} multiple choice questions but {len(answer_key)} answers in the answer key. Please check for missing or extra answers.")
+#             
+#             # Create downloadable files
+#             exam_rtf_content = None
+#             exam_rtf_bytes = None
+#             instructions_docx = None
+#             
+#             # Generate instructions if provided
+#             if instructions_text:
+#                 instructions_docx = generate_instructions_docx(instructions_text)
+#             
+#             # Generate exam RTF
+#             exam_rtf_content = create_rtf_content(
+#                 questions_list, 
+#                 answer_key if not use_asterisk_method else None, 
+#                 not use_asterisk_method
+#             )
+#             
+#             # Try LibreOffice Docker/Azure API conversion for best quality
+#             with tempfile.TemporaryDirectory() as tmpdir:
+#                 docx_path = os.path.join(tmpdir, "ExamSoft_Export.docx")
+#                 rtf_path = os.path.join(tmpdir, "ExamSoft_Export.rtf")
+#                 generate_docx_with_questions(questions_list, '', docx_path)
+#                 
+#                 try:
+#                     # Use Docker/Flask API for conversion (Azure or local)
+#                     api_endpoint = get_converter_endpoint()
+#                     convert_docx_to_rtf_via_api(docx_path, rtf_path, api_url=api_endpoint)
+#                     with open(rtf_path, "rb") as f:
+#                         exam_rtf_bytes = f.read()
+#                     
+#                     # Show success message based on endpoint type
+#                     if is_using_azure() if AZURE_CONFIG_AVAILABLE else False:
+#                         st.success("✅ RTF generated using Azure LibreOffice API with clean encoding and best formatting fidelity.")
+#                     else:
+#                         st.success("✅ RTF generated using local LibreOffice Docker API with clean encoding and best formatting fidelity.")
+#                 except Exception as e:
+#                     endpoint_type = "Azure" if (is_using_azure() if AZURE_CONFIG_AVAILABLE else False) else "local Docker"
+#                     st.error(f"❌ LibreOffice {endpoint_type} API conversion failed: {e}")
+#                     if not (is_using_azure() if AZURE_CONFIG_AVAILABLE else False):
+#                         st.info("💡 Make sure the Docker container is running on localhost:8080")
+#                         st.info("🌤️ Or deploy to Azure using the deployment script for better reliability")
+#                     st.info("🔄 Using basic RTF conversion as fallback.")
+#             
+#             # Store processed data in session state
+#             st.session_state.processed_data = {
+#                 'instructions_text': instructions_text,
+#                 'instructions_docx': instructions_docx,
+#                 'instructions_filename': instructions_filename,
+#                 'questions_list': questions_list,
+#                 'exam_rtf_content': exam_rtf_content,
+#                 'exam_rtf_bytes': exam_rtf_bytes,
+#                 'exam_filename': exam_filename,
+#                 'mc_count': mc_count,
+#                 'essay_count': essay_count,
+#                 'answer_key': answer_key,
+#                 'use_asterisk_method': use_asterisk_method
+#             }
+#             
+#             st.success(f"Processed {len(questions_list)} questions successfully!")
+#             st.info(f"Found {mc_count} multiple choice questions and {essay_count} essay questions")
+#             
+#             # Show answer key info
+#             if use_asterisk_method:
+#                 asterisk_count = sum(1 for q in questions_list for line in q.split('\n') if line.startswith('*'))
+#                 st.info(f"Marked {asterisk_count} correct answers with asterisks")
+#             else:
+#                 st.info(f"Answer key section with {len(answer_key)} answers will be added at the end")
+#         else:
+#             st.error("No questions were found or formatted")
+#             st.write("Debug - Raw exam questions preview:")
+#             st.text(questions_text[:1000])
+# 
+# # Display download options if data has been processed
+# if st.session_state.processed_data:
+#     data = st.session_state.processed_data
+#     
+#     st.markdown("---")
+#     st.subheader("Download Files")
+#     
+#     # Display preview
+#     if data['instructions_text']:
+#         st.subheader("Instructions Preview")
+#         st.text(data['instructions_text'][:500] + "..." if len(data['instructions_text']) > 500 else data['instructions_text'])
+#     
+#     st.subheader("Questions Preview (First 3)")
+#     for i, q in enumerate(data['questions_list'][:3]):
+#         st.text(q[:200] + "..." if len(q) > 200 else q)
+#         st.markdown("---")
+#     
+#     # Download checkboxes and buttons
+#     st.subheader("Select Files to Download")
+#     
+#     col1, col2 = st.columns(2)
+#     
+#     with col1:
+#         if data['instructions_docx']:
+#             download_instructions = st.checkbox("📄 Download Instructions (DOCX)", value=True, key="download_inst_cb")
+#             if download_instructions:
+#                 st.download_button(
+#                     label="📄 Download Instructions",
+#                     data=data['instructions_docx'],
+#                     file_name=data['instructions_filename'],
+#                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+#                     use_container_width=True,
+#                     key="download_inst_btn"
+#                 )
+#         else:
+#             st.info("No instructions to download (none were provided)")
+#     
+#     with col2:
+#         download_exam = st.checkbox("📝 Download Exam (RTF)", value=True, key="download_exam_cb")
+#         if download_exam:
+#             # Use Docker API version if available, otherwise fallback to basic
+#             if data['exam_rtf_bytes']:
+#                 st.download_button(
+#                     label="📝 Download Exam (LibreOffice API)",
+#                     data=data['exam_rtf_bytes'],
+#                     file_name=data['exam_filename'],
+#                     mime="text/rtf",
+#                     use_container_width=True,
+#                     key="download_exam_api_btn"
+#                 )
+#             else:
+#                 st.download_button(
+#                     label="📝 Download Exam (Basic RTF)",
+#                     data=data['exam_rtf_content'],
+#                     file_name=data['exam_filename'],
+#                     mime="text/rtf",
+#                     use_container_width=True,
+#                     key="download_exam_basic_btn"
+#                 )
+#     
+#     # SharePoint Upload Section  
+#     if SHAREPOINT_INTEGRATION_AVAILABLE:
+#         st.markdown("---")
+#         st.subheader("📤 Upload to SharePoint (Optional)")
+#         
+#         # Check if user is authenticated (persistent auth handles token validation)
+#         is_authenticated = (
+#             st.session_state.get('sp_access_token') or 
+#             st.session_state.get('access_token') or 
+#             st.session_state.get('sharepoint_access_token')
+#         )
+#         
+#         if is_authenticated:
+#             # Show upload options
+#             st.write("✅ **Ready to upload!** Select files to upload to SharePoint:")
+#             
+#             upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint", key="upload_inst_sp_cb") if data['instructions_docx'] else False
+#             upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True, key="upload_exam_sp_cb")
+#             
+#             if st.button("🚀 Upload to SharePoint", use_container_width=True, key="sharepoint_upload_btn"):
+#                 try:
+#                     with st.spinner("Uploading to SharePoint..."):
+#                         access_token = (
+#                             st.session_state.get('sp_access_token') or 
+#                             st.session_state.get('access_token') or 
+#                             st.session_state.get('sharepoint_access_token')
+#                         )
+#                         
+#                         upload_results = []
+#                         
+#                         # Upload instructions if selected
+#                         if upload_instructions_sp and data['instructions_docx']:
+#                             success, result = upload_to_sharepoint_corrected(
+#                                 access_token, 
+#                                 data['instructions_docx'], 
+#                                 data['instructions_filename']
+#                             )
+#                             upload_results.append(("Instructions", success, result))
+#                         
+#                         # Upload exam if selected
+#                         if upload_exam_sp:
+#                             # Debug: Show what keys are available
+#                             st.write("🔍 **Debug - Available data keys:**", list(data.keys()))
+#                             
+#                             # Use the correct RTF content key
+#                             rtf_content = data.get('exam_rtf_bytes') or data.get('exam_rtf_content')
+#                             
+#                             # Debug: Show what we found
+#                             st.write(f"🔍 **Debug - RTF content type:** {type(rtf_content)}")
+#                             st.write(f"🔍 **Debug - RTF content size:** {len(rtf_content) if rtf_content and hasattr(rtf_content, '__len__') else 'N/A'}")
+#                             
+#                             if rtf_content:
+#                                 success, result = upload_to_sharepoint_corrected(
+#                                     access_token, 
+#                                     rtf_content, 
+#                                     data['exam_filename']
+#                                 )
+#                                 upload_results.append(("Exam", success, result))
+#                             else:
+#                                 upload_results.append(("Exam", False, "No RTF content available"))
+#                         
+#                         # Show results
+#                         for file_type, success, result in upload_results:
+#                             if success:
+#                                 st.success(f"✅ {file_type} uploaded successfully!")
+#                                 if isinstance(result, dict) and 'url' in result:
+#                                     st.write(f"📁 **Uploaded to:** Exam Procedures / ExamSoft / Import")
+#                                     st.write(f"🔗 **File URL:** {result['url']}")
+#                                     if 'size' in result:
+#                                         st.write(f"📊 **Size:** {result['size']} bytes")
+#                             else:
+#                                 st.error(f"❌ Failed to upload {file_type}: {result}")
+#                         
+#                         if all(success for _, success, _ in upload_results):
+#                             st.balloons()
+#                             st.success("🎉 All files uploaded successfully to **Exam Procedures / ExamSoft / Import**!")
+#                         
+#                 except Exception as e:
+#                     st.error(f"Upload error: {str(e)}")
+#         else:
+#             st.info("🔐 **Sign in with Microsoft 365** in the sidebar to upload to SharePoint")
+#             st.write("Your authentication will persist for up to 90 days!")
+#     else:
+#         st.markdown("---")
+#         st.subheader("📤 Upload to SharePoint (Optional)")
+#         st.warning("⚠️ SharePoint functionality not available.")
+#         st.write("Please ensure the `sharepoint_integration.py` module is available.")
+#         with st.expander("SharePoint Upload Settings", expanded=False):
+#             st.write("🔐 **Secure Microsoft 365 Authentication**")
+#             st.write("Sign in with your Charleston School of Law Microsoft 365 account to upload files securely.")
+#             
+#             # Note about app registration
+#             st.info("📋 **IT Setup Required**: This feature requires app registration in your Microsoft 365 tenant. Contact IT to configure the client ID and permissions.")
+#             
+#             # For now, show configuration fields that IT would need to set up
+#             st.write("**Required IT Configuration:**")
+#             st.code(f"""
+# App Registration Settings:
+# - Client ID: {M365_CONFIG['client_id']}
+# - Tenant: {M365_CONFIG['tenant_id']}
+# - Redirect URI: {M365_CONFIG['redirect_uri']}
+# - Required Permissions:
+#   • Sites.ReadWrite.All
+#   • Files.ReadWrite.All
+#             """)
+#             
+#             # Direct users to the real authentication in the sidebar
+#             st.info("🔐 **To enable SharePoint upload:** Use the Microsoft 365 sign-in button in the sidebar →")
+#             st.write("Once configured, you will be able to:")
+#             st.write("• Sign in securely with your Microsoft 365 account")
+#             st.write("• Upload files directly to SharePoint")
+#             st.write("• Stay signed in for up to 90 days")
+#             
+#             # Mock interface to show what it would look like when working
+#             st.write("---")
+#             st.write("**Preview of Full SharePoint Integration** (once IT setup is complete):")
+#             
+#             # Upload checkboxes (currently disabled)
+#             upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint", disabled=True) if data['instructions_docx'] else False
+#             upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True, disabled=True)
+#             
+#             st.button("🚀 Upload to SharePoint", disabled=True, help="Requires Microsoft 365 app registration")
+#     
+#     # Action buttons after processing
+#     st.markdown("---")
+#     col1, col2, col3 = st.columns([1, 2, 1])
+#     
+#     with col1:
+#         if st.button("🔄 Convert Another Exam", use_container_width=True, help="Clear form and start over", key="convert_another_btn"):
+#             # Clear all processed data and form inputs
+#             st.session_state.processed_data = None
+#             # Clear form session state if it exists
+#             for key in list(st.session_state.keys()):
+#                 if key.startswith('form_') or key in ['course_input', 'section_input', 'professor_input']:
+#                     del st.session_state[key]
+#             st.success("📝 Form cleared! Ready for next exam.")
+#             st.rerun()
+#     
+#     with col3:
+#         st.write("") # Spacer
+# 
+# else:
+#     st.info("Paste your exam questions and answer key above, then click 'Process Data'. Instructions are optional.")
+# 
+# 
+# # This file contains the main Streamlit UI code
+# # The UI runs immediately when imported

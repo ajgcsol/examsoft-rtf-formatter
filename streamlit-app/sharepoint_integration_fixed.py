@@ -69,7 +69,7 @@ def get_site_id_from_url(site_url, access_token):
         
         st.write(f"🔍 **Site ID Debug:**")
         st.write(f"- Input Site URL: {site_url}")
-        st.write(f"- Expected Site URL: https://charlestonlaw.sharepoint.com/sites/acad_affairs")
+        st.write(f"- Expected Site URL: https://charlestonlaw.sharepoint.com/sites/IT")
         st.write(f"- Parsed Hostname: {hostname}")
         st.write(f"- Parsed Site Path: {site_path}")
         
@@ -453,14 +453,14 @@ App Registration Details:
                 
                 sharepoint_site_url = st.text_input(
                     "SharePoint Site URL:",
-                    value="https://charlestonlaw.sharepoint.com/sites/acad_affairs",
+                    value="https://charlestonlaw.sharepoint.com/sites/IT",
                     help="Enter the URL of your SharePoint site where you want to upload files"
                 )
                 
                 folder_path = st.text_input(
                     "Folder Path:",
-                    value="Exam Procedures/ExamSoft/Import",
-                    help="Enter the folder path within the SharePoint site (e.g., 'Exam Procedures/ExamSoft/Import')"
+                    value="ExamSoft/File-converter/Import",
+                    help="Enter the folder path within the SharePoint site (e.g., 'ExamSoft/File-converter/Import')"
                 )
                 
                 # Upload file selection
