@@ -6,7 +6,7 @@ ACR_NAME="examsoftacr202508022041"
 RESOURCE_GROUP_NAME="examsoft-rg-202508022041"
 ACI_NAME="examsoft-streamlit-1754167662"
 IMAGE_NAME="examsoft-rtf-formatter"
-NEW_TAG="v12"
+NEW_TAG="v13"
 
 # Color functions
 success() { echo -e "\033[32m✅ $1\033[0m"; }

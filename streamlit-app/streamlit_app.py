@@ -710,9 +710,9 @@ def load_favorite_folders():
     if 'favorite_folders' not in st.session_state:
         st.session_state.favorite_folders = [
             {
-                'name': 'ExamSoft Import (Academic Affairs)',
+                'name': 'ExamSoft Import (IT)',
                 'site_id': 'charlestonlaw.sharepoint.com,ba0b6d09-2f32-4ccf-a24d-9a41e9be4a6a,ffe7f195-f2eb-4f68-af47-35a01fa9a2d7',
-                'path': 'Exam Procedures/ExamSoft/Import',
+                'path': 'ExamSoft/File-converter/Import',
                 'is_default': True
             }
         ]
