@@ -166,7 +166,7 @@ def get_user_info(access_token):
         return None
 
 def initialize_persistent_auth():
-    """Initialize persistent authentication system"""
+    """Initialize persistent authentication system with better caching"""
     
     # Initialize session state
     if 'sp_access_token' not in st.session_state:
@@ -178,14 +178,14 @@ def initialize_persistent_auth():
     if 'auth_expires_at' not in st.session_state:
         st.session_state.auth_expires_at = None
     
-    # Try to load cached authentication
-    if not st.session_state.sp_authenticated:
-        cached_auth = load_token_from_cache()
-        if cached_auth:
-            # Validate the cached token
+    # Always try to load cached authentication first
+    cached_auth = load_token_from_cache()
+    if cached_auth:
+        # Test if the cached token is still valid
+        try:
             user_info = get_user_info(cached_auth['access_token'])
             if user_info:
-                # Cached token is still valid
+                # Cached token is still valid - restore session
                 st.session_state.sp_access_token = cached_auth['access_token']
                 st.session_state.access_token = cached_auth['access_token']
                 st.session_state.sharepoint_access_token = cached_auth['access_token']
@@ -195,33 +195,38 @@ def initialize_persistent_auth():
                 st.session_state.refresh_token = cached_auth.get('refresh_token')
                 
                 return True
-            else:
-                # Token invalid, try to refresh if we have a refresh token
-                refresh_token = cached_auth.get('refresh_token')
-                if refresh_token:
-                    refreshed = refresh_access_token(refresh_token)
-                    if refreshed and 'access_token' in refreshed:
-                        # Save the new token
-                        save_token_to_cache(refreshed)
-                        
-                        # Update session state
-                        st.session_state.sp_access_token = refreshed['access_token']
-                        st.session_state.access_token = refreshed['access_token']
-                        st.session_state.sharepoint_access_token = refreshed['access_token']
-                        st.session_state.sp_authenticated = True
-                        st.session_state.sp_user_info = get_user_info(refreshed['access_token'])
-                        st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=refreshed.get('expires_in', 3600))).isoformat()
-                        st.session_state.refresh_token = refreshed.get('refresh_token')
-                        
-                        return True
-                
-                # Refresh failed, clear cache
-                clear_token_cache()
+        except:
+            pass
+        
+        # Token invalid, try to refresh if we have a refresh token
+        refresh_token = cached_auth.get('refresh_token')
+        if refresh_token:
+            try:
+                refreshed = refresh_access_token(refresh_token)
+                if refreshed and 'access_token' in refreshed:
+                    # Save the new token
+                    save_token_to_cache(refreshed)
+                    
+                    # Update session state
+                    st.session_state.sp_access_token = refreshed['access_token']
+                    st.session_state.access_token = refreshed['access_token']
+                    st.session_state.sharepoint_access_token = refreshed['access_token']
+                    st.session_state.sp_authenticated = True
+                    st.session_state.sp_user_info = get_user_info(refreshed['access_token'])
+                    st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=refreshed.get('expires_in', 3600))).isoformat()
+                    st.session_state.refresh_token = refreshed.get('refresh_token')
+                    
+                    return True
+            except:
+                pass
+        
+        # Refresh failed, clear cache
+        clear_token_cache()
     
     return st.session_state.sp_authenticated
 
 def render_persistent_auth_ui():
-    """Render authentication UI with persistent login - BULLETPROOF VERSION"""
+    """Render authentication UI with persistent login - SIMPLIFIED VERSION"""
     
     # Initialize session state if needed
     if 'sp_authenticated' not in st.session_state:
@@ -240,83 +245,88 @@ def render_persistent_auth_ui():
     st.info("🔐 **Microsoft 365 Authentication**")
     st.write("Sign in to upload files to SharePoint")
     
-    # Initialize auth step
-    if 'auth_step' not in st.session_state:
-        st.session_state.auth_step = 'start'
-    
-    # Step 1: Get device code
-    if st.session_state.auth_step == 'start':
-        if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary"):
-            try:
-                # Validate configuration
-                if not CONFIG_AVAILABLE or not M365_CONFIG:
-                    st.error("❌ Configuration error - MSAL or M365 config not available")
-                    return False
-                
-                # Get device flow
+    # Single button authentication
+    if st.button("🔑 Sign in with Microsoft 365", use_container_width=True, type="primary", key=f"auth_signin_btn_{id(st.session_state)}"):
+        try:
+            # Validate configuration
+            if not CONFIG_AVAILABLE or not M365_CONFIG:
+                st.error("❌ Configuration error - MSAL or M365 config not available")
+                return False
+            
+            # Get device flow
+            with st.spinner("Getting authentication code..."):
                 app, flow = get_device_flow()
+            
+            if app and flow and 'user_code' in flow:
+                # Show device code and auto-check
+                st.success("🎯 **Authentication Code Ready!**")
+                st.info(f"**Visit:** {flow['verification_uri']}")
+                st.code(flow['user_code'], language=None)
+                st.write("1. Click the link above")
+                st.write("2. Enter the code and sign in")
+                st.write("3. This page will automatically refresh when complete")
                 
-                if app and flow and 'user_code' in flow:
-                    # Store in session state
-                    st.session_state.auth_app = app
-                    st.session_state.auth_flow = flow
-                    st.session_state.auth_step = 'show_code'
-                else:
-                    st.error("❌ Failed to create authentication flow")
+                # Auto-poll for completion (with reasonable timeout)
+                import time
+                max_attempts = 60  # 5 minutes max
+                attempt = 0
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                while attempt < max_attempts:
+                    attempt += 1
+                    progress = attempt / max_attempts
+                    progress_bar.progress(progress)
+                    status_text.text(f"Waiting for authentication... ({attempt}/{max_attempts})")
                     
-            except Exception as e:
-                st.error(f"❌ Authentication error: {str(e)}")
-    
-    # Step 2: Show device code and completion button
-    elif st.session_state.auth_step == 'show_code':
-        flow = st.session_state.auth_flow
-        app = st.session_state.auth_app
-        
-        st.success("🎯 **Authentication Code Ready!**")
-        st.info(f"**Visit:** {flow['verification_uri']}")
-        st.code(flow['user_code'], language=None)
-        st.write("1. Click the link above")
-        st.write("2. Enter the code")
-        st.write("3. Sign in with your account")
-        st.write("4. Come back and click Complete Sign In")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("✅ Complete Sign In", use_container_width=True, type="primary"):
-                with st.spinner("Completing authentication..."):
-                    result = complete_device_flow(app, flow)
-                    if result and 'access_token' in result:
-                        # Save to cache
-                        save_token_to_cache(result)
-                        
-                        # Set session state
-                        st.session_state.sp_access_token = result['access_token']
-                        st.session_state.access_token = result['access_token']
-                        st.session_state.sharepoint_access_token = result['access_token']
-                        st.session_state.sp_authenticated = True
-                        st.session_state.sp_user_info = get_user_info(result['access_token'])
-                        st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=result.get('expires_in', 3600))).isoformat()
-                        
-                        # Clean up
-                        st.session_state.auth_step = 'start'
-                        if 'auth_app' in st.session_state:
-                            del st.session_state.auth_app
-                        if 'auth_flow' in st.session_state:
-                            del st.session_state.auth_flow
-                        
-                        st.success("🎉 Authentication successful!")
-                        return True
-                    else:
-                        st.error("❌ Authentication failed. Make sure you completed the sign-in process.")
-        
-        with col2:
-            if st.button("❌ Cancel", use_container_width=True):
-                st.session_state.auth_step = 'start'
-                if 'auth_app' in st.session_state:
-                    del st.session_state.auth_app
-                if 'auth_flow' in st.session_state:
-                    del st.session_state.auth_flow
+                    try:
+                        result = complete_device_flow(app, flow)
+                        if result and 'access_token' in result:
+                            # Success! Save and update
+                            save_token_to_cache(result)
+                            
+                            # Set session state
+                            st.session_state.sp_access_token = result['access_token']
+                            st.session_state.access_token = result['access_token']
+                            st.session_state.sharepoint_access_token = result['access_token']
+                            st.session_state.sp_authenticated = True
+                            st.session_state.sp_user_info = get_user_info(result['access_token'])
+                            st.session_state.auth_expires_at = (datetime.now() + timedelta(seconds=result.get('expires_in', 3600))).isoformat()
+                            
+                            progress_bar.progress(1.0)
+                            status_text.text("Authentication successful!")
+                            st.success("🎉 Authentication successful!")
+                            time.sleep(1)
+                            st.rerun()
+                            return True
+                            
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "54005" in error_msg or "already redeemed" in error_msg:
+                            # Code expired, but this is expected during polling
+                            break
+                        elif "authorization_pending" in error_msg or "slow_down" in error_msg:
+                            # User hasn't completed auth yet, continue waiting
+                            time.sleep(5)
+                            continue
+                        else:
+                            # Other error
+                            st.error(f"❌ Authentication error: {error_msg}")
+                            break
+                    
+                    time.sleep(5)  # Wait 5 seconds between checks
+                
+                # Timeout or error
+                progress_bar.empty()
+                status_text.empty()
+                st.warning("⏱️ Authentication timed out. Please try again.")
+                
+            else:
+                st.error("❌ Failed to create authentication flow")
+                
+        except Exception as e:
+            st.error(f"❌ Authentication error: {str(e)}")
     
     return False
 
