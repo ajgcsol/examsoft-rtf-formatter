@@ -16,7 +16,8 @@ try:
             "scope": [
                 "https://graph.microsoft.com/Sites.ReadWrite.All", 
                 "https://graph.microsoft.com/Files.ReadWrite.All",
-                "https://graph.microsoft.com/User.Read"
+                "https://graph.microsoft.com/User.Read",
+                "https://graph.microsoft.com/Mail.Send"
             ],
             "redirect_uri": "https://csol-examsoft-converter.streamlit.app"
         }
@@ -32,7 +33,8 @@ except Exception:
         "scope": [
             "https://graph.microsoft.com/Sites.ReadWrite.All", 
             "https://graph.microsoft.com/Files.ReadWrite.All",
-            "https://graph.microsoft.com/User.Read"
+            "https://graph.microsoft.com/User.Read",
+            "https://graph.microsoft.com/Mail.Send"
         ],
         "redirect_uri": "http://localhost:8501"
     }

@@ -33,7 +33,9 @@ except ImportError:
         "tenant_id": "charlestonlaw.edu",
         "authority": "https://login.microsoftonline.com/charlestonlaw.edu",
         "scope": ["https://graph.microsoft.com/Sites.ReadWrite.All", 
-                 "https://graph.microsoft.com/Files.ReadWrite.All"],
+                 "https://graph.microsoft.com/Files.ReadWrite.All",
+                 "https://graph.microsoft.com/User.Read",
+                 "https://graph.microsoft.com/Mail.Send"],
         "redirect_uri": "http://localhost:8501"
     }
 
