@@ -44,7 +44,7 @@ def render_text_paste_method():
 
     st.subheader("Answer Key")
     answer_key_input = st.text_area("Paste Answer Key", height=150, key="answer_key_input",
-                                   help="Paste a single column of answers (A, B, C, D, etc.) from Excel or CSV. One per line.")
+                                   help="Paste a single column of answers (A, B, C, D, etc.) from Excel or CSV. One per line for multiple choice questions only. Essay questions don't need answers.")
 
     st.subheader("Answer Key Method")
     answer_method = st.radio(
@@ -175,27 +175,27 @@ def render_file_upload_method():
     st.write("**Instructions File (Optional)**")
     instructions_file = st.file_uploader(
         "Upload instructions file", 
-        type=['docx', 'rtf', 'txt'],
+        type=['docx', 'rtf', 'txt', 'odt'],
         key="instructions_file_upload",
-        help="Upload a Word document, RTF, or text file containing exam instructions"
+        help="Upload a Word document, RTF, ODT, or text file containing exam instructions"
     )
     
     # Questions file upload
     st.write("**Questions File (Required)**")
     questions_file = st.file_uploader(
         "Upload questions file", 
-        type=['docx', 'rtf', 'txt', 'csv', 'xlsx'],
+        type=['docx', 'rtf', 'txt', 'csv', 'xlsx', 'odt', 'ods'],
         key="questions_file_upload",
-        help="Upload a file containing exam questions and answer choices"
+        help="Upload a file containing exam questions and answer choices (Word, RTF, ODT, Excel, ODS, CSV, or TXT)"
     )
     
     # Answer key file upload
     st.write("**Answer Key File (Optional)**")
     answer_key_file = st.file_uploader(
         "Upload answer key file", 
-        type=['txt', 'csv', 'xlsx'],
+        type=['txt', 'csv', 'xlsx', 'ods'],
         key="answer_key_file_upload",
-        help="Upload a file containing the answer key. For Excel/CSV: answers should be in the first column. For TXT: one answer per line (A, B, C, D, etc.)"
+        help="Upload a file containing the answer key. For Excel/ODS/CSV: answers should be in the first column. For TXT: one answer per line (A, B, C, D, etc.). Only needed for multiple choice questions - essay questions don't need answers."
     )
 
     st.subheader("Answer Key Method")
@@ -235,9 +235,11 @@ def render_file_upload_method():
                 
                 final_instructions, final_questions = preview_parsed_content(parsed_instructions, parsed_questions)
                 
+                # Define method_prefix for this function before using it
+                method_prefix = "file"
+                
                 # Allow manual override
                 st.subheader("✏️ Manual Adjustments (Optional)")
-                method_prefix = "file"  # Define method_prefix for this function
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -406,6 +408,38 @@ def extract_text_from_file(uploaded_file):
         except Exception as e:
             st.error(f"❌ Failed to read Excel file: {str(e)}")
             st.info("💡 Try converting your Excel file to CSV or TXT format.")
+            return ""
+    elif uploaded_file.name.endswith('.odt'):
+        # ODT file (OpenDocument Text)
+        try:
+            from odf.text import P
+            from odf.opendocument import load
+            doc = load(io.BytesIO(content))
+            paragraphs = doc.getElementsByType(P)
+            text_content = []
+            for p in paragraphs:
+                text_content.append(str(p))
+            return '\n'.join(text_content)
+        except ImportError:
+            st.error("❌ ODT support requires 'odfpy' library. Please convert to DOCX or TXT format.")
+            return ""
+        except Exception as e:
+            st.error(f"❌ Failed to read ODT file: {str(e)}")
+            st.info("💡 Try converting your ODT file to DOCX or TXT format.")
+            return ""
+    elif uploaded_file.name.endswith('.ods'):
+        # ODS file (OpenDocument Spreadsheet)
+        try:
+            import pandas as pd
+            # Try using pandas with odf support
+            df = pd.read_excel(io.BytesIO(content), engine='odf')
+            return '\n'.join([' '.join(str(val) for val in row if pd.notna(val)) for _, row in df.iterrows()])
+        except ImportError:
+            st.error("❌ ODS support requires additional libraries. Please convert to XLSX or CSV format.")
+            return ""
+        except Exception as e:
+            st.error(f"❌ Failed to read ODS file: {str(e)}")
+            st.info("💡 Try converting your ODS file to XLSX or CSV format.")
             return ""
     else:
         st.error(f"Unsupported file type: {file_type}")
@@ -711,8 +745,8 @@ def load_favorite_folders():
         st.session_state.favorite_folders = [
             {
                 'name': 'ExamSoft Import (IT)',
-                'site_id': 'charlestonlaw.sharepoint.com,ba0b6d09-2f32-4ccf-a24d-9a41e9be4a6a,ffe7f195-f2eb-4f68-af47-35a01fa9a2d7',
-                'path': 'ExamSoft/File-converter/Import',
+                'site_id': 'charlestonlaw.sharepoint.com:/sites/IT',
+                'path': 'Shared Documents/ExamSoft/File-converter/Import',
                 'is_default': True
             }
         ]
@@ -885,8 +919,8 @@ def render_folder_browser(access_token, site_id, method_prefix):
     elif folder_method == "✏️ Enter Path":
         selected_folder_path = st.text_input(
             "Folder Path",
-            value="Exam Procedures/ExamSoft/Import",
-            placeholder="e.g., Exam Procedures/ExamSoft/Import",
+            value="Shared Documents/ExamSoft/File-converter/Import",
+            placeholder="e.g., Shared Documents/ExamSoft/File-converter/Import",
             key=f"manual_folder_path_{method_prefix}",
             help="Enter the full folder path within the SharePoint site"
         )
@@ -922,19 +956,41 @@ def render_folder_browser(access_token, site_id, method_prefix):
     return ""
 
 def send_notification_email(access_token, recipients, subject, body, uploaded_files):
-    """Send email notification using Microsoft Graph API"""
+    """Send email notification using Microsoft Graph API with robust error handling"""
     try:
         import requests
+        import json
         
         # Clean recipient list
-        clean_recipients = [email.strip() for email in recipients if email.strip()]
+        if isinstance(recipients, str):
+            clean_recipients = [email.strip() for email in recipients.split('\n') if email.strip()]
+        else:
+            clean_recipients = [email.strip() for email in recipients if email.strip()]
+        
+        print(f"📧 Attempting to send email to: {clean_recipients}")
         
         if not clean_recipients:
-            return False
+            print("❌ No valid recipients found")
+            return False, "No valid email recipients provided"
+        
+        # Validate email addresses
+        import re
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        valid_recipients = []
+        for email in clean_recipients:
+            if re.match(email_pattern, email):
+                valid_recipients.append(email)
+            else:
+                print(f"⚠️ Invalid email format: {email}")
+        
+        if not valid_recipients:
+            print("❌ No valid email addresses found")
+            return False, "No valid email addresses found"
         
         # Add file links to email body if any
+        email_body = body
         if uploaded_files:
-            body += "\n\nFile Links:\n" + "\n".join(f"• {file}" for file in uploaded_files)
+            email_body += "\n\n📎 Uploaded Files:\n" + "\n".join(f"• {file}" for file in uploaded_files)
         
         # Prepare email data - use HTML format for better formatting
         email_data = {
@@ -942,20 +998,36 @@ def send_notification_email(access_token, recipients, subject, body, uploaded_fi
                 "subject": subject,
                 "body": {
                     "contentType": "HTML",
-                    "content": body.replace('\n', '<br>')
+                    "content": email_body.replace('\n', '<br>')
                 },
                 "toRecipients": [
                     {"emailAddress": {"address": email}} 
-                    for email in clean_recipients
+                    for email in valid_recipients
                 ]
             },
-            "saveToSentItems": "true"
+            "saveToSentItems": True
         }
         
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
         }
+        
+        print(f"📧 Sending email via Microsoft Graph API...")
+        
+        # Test token first with a simple Graph API call
+        try:
+            test_response = requests.get(
+                'https://graph.microsoft.com/v1.0/me',
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=10
+            )
+            if test_response.status_code != 200:
+                print(f"❌ Token validation failed: {test_response.status_code}")
+                return False, f"Authentication token invalid: {test_response.status_code}"
+        except Exception as token_error:
+            print(f"❌ Token validation error: {token_error}")
+            return False, f"Token validation failed: {str(token_error)}"
         
         # Send email via Microsoft Graph
         response = requests.post(
@@ -965,24 +1037,44 @@ def send_notification_email(access_token, recipients, subject, body, uploaded_fi
             timeout=30
         )
         
-        print(f"📧 Email response: {response.status_code}")
-        print(f"📧 Email response text: {response.text[:200]}")
+        print(f"📧 Email API response: {response.status_code}")
         
         if response.status_code == 202:  # Accepted
-            return True
+            print("✅ Email sent successfully!")
+            return True, "Email sent successfully"
         elif response.status_code == 403:
-            print(f"❌ Email permission denied - check Mail.Send permission")
-            return False
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get('error', {}).get('message', '')
+            except:
+                error_detail = response.text[:200]
+            
+            print(f"❌ Email permission denied: {error_detail}")
+            return False, f"Permission denied - Mail.Send scope required: {error_detail}"
         elif response.status_code == 400:
-            print(f"❌ Email bad request - check recipient addresses")
-            return False
+            error_detail = ""
+            try:
+                error_data = response.json()
+                error_detail = error_data.get('error', {}).get('message', '')
+            except:
+                error_detail = response.text[:200]
+            
+            print(f"❌ Email bad request: {error_detail}")
+            return False, f"Bad request - check email format: {error_detail}"
+        elif response.status_code == 401:
+            print(f"❌ Email unauthorized - token expired or invalid")
+            return False, "Unauthorized - please sign out and sign back in"
         else:
-            print(f"❌ Email failed: {response.text}")
-            return False
+            error_detail = response.text[:200] if response.text else "Unknown error"
+            print(f"❌ Email failed with status {response.status_code}: {error_detail}")
+            return False, f"Email failed ({response.status_code}): {error_detail}"
             
     except Exception as e:
         print(f"❌ Email exception: {str(e)}")
-        return False
+        import traceback
+        traceback.print_exc()
+        return False, f"Email error: {str(e)}"
 
 def render_results(SHAREPOINT_AVAILABLE, method_prefix=""):
     """Render the results section (shared between both methods)"""
@@ -1049,94 +1141,95 @@ def render_results(SHAREPOINT_AVAILABLE, method_prefix=""):
         is_authenticated = st.session_state.get('sp_authenticated', False)
         
         if is_authenticated:
-            # Load available SharePoint sites dynamically
-            st.write("🌐 **Choose SharePoint Site:**")
+            # SharePoint upload method selection
+            upload_method = st.radio(
+                "SharePoint Upload Method",
+                ("🚀 Auto Upload (IT Default)", "🔧 Custom Location"),
+                key=f"upload_method_{method_prefix}",
+                help="Choose automatic upload to IT folder or manually select location"
+            )
             
-            if 'available_sites' not in st.session_state:
-                with st.spinner("Loading available SharePoint sites..."):
-                    access_token = st.session_state.get('sp_access_token')
-                    sites = get_available_sharepoint_sites(access_token)
-                    st.session_state.available_sites = sites
-            
-            sites = st.session_state.available_sites
-            
-            if sites:
-                site_options = [f"{site['displayName']} ({site['webUrl']})" for site in sites]
-                selected_site_display = st.selectbox(
-                    "Select SharePoint Site",
-                    options=site_options,
-                    key=f"sharepoint_site_{method_prefix}",
-                    help="Choose which SharePoint site to upload to"
-                )
-                
-                # Find selected site data
-                selected_site_index = site_options.index(selected_site_display)
-                selected_site_data = sites[selected_site_index]
-                
-                st.info(f"📍 **Selected**: {selected_site_data['displayName']}")
-                st.write(f"🔗 **URL**: {selected_site_data['webUrl']}")
-                
-                # Advanced folder browser
-                selected_folder_path = render_folder_browser(
-                    st.session_state.get('sp_access_token'), 
-                    selected_site_data['id'], 
-                    method_prefix
-                )
-                    
-                site_info = {
-                    'site_id': selected_site_data['id'],
-                    'path': selected_folder_path
-                } if selected_folder_path else None
+            if upload_method == "🚀 Auto Upload (IT Default)":
+                st.info("✅ **Auto Upload**: Files will upload to IT SharePoint > ExamSoft > File-converter > Import")
+                site_info = None  # Use default corrected upload function
             else:
-                st.error("❌ Could not load SharePoint sites. Check permissions.")
+                st.info("🔧 **Custom Location**: Choose different SharePoint site and folder")
+                # Manual site selection
+                st.write("🌐 **Manual SharePoint Site Selection:**")
+                
+                if 'available_sites' not in st.session_state:
+                    with st.spinner("Loading available SharePoint sites..."):
+                        access_token = st.session_state.get('sp_access_token')
+                        sites = get_available_sharepoint_sites(access_token)
+                        st.session_state.available_sites = sites
+                
+                sites = st.session_state.available_sites
+                
+                if sites:
+                    site_options = [f"{site['displayName']} ({site['webUrl']})" for site in sites]
+                    selected_site_display = st.selectbox(
+                        "Select SharePoint Site",
+                        options=site_options,
+                        key=f"sharepoint_site_{method_prefix}",
+                        help="Choose which SharePoint site to upload to"
+                    )
+                    
+                    # Find selected site data
+                    selected_site_index = site_options.index(selected_site_display)
+                    selected_site_data = sites[selected_site_index]
+                    
+                    st.info(f"📍 **Selected**: {selected_site_data['displayName']}")
+                    st.write(f"🔗 **URL**: {selected_site_data['webUrl']}")
+                    
+                    # Advanced folder browser
+                    selected_folder_path = render_folder_browser(
+                        st.session_state.get('sp_access_token'), 
+                        selected_site_data['id'], 
+                        method_prefix
+                    )
+                        
+                    site_info = {
+                        'site_id': selected_site_data['id'],
+                        'path': selected_folder_path
+                    } if selected_folder_path else None
+                else:
+                    st.error("❌ Could not load SharePoint sites. Check permissions.")
+                    site_info = None
+                
+                # Refresh button
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("🔄 Refresh", key=f"refresh_sites_{method_prefix}"):
+                        st.session_state.pop('available_sites', None)
+                        st.session_state.pop('available_folders', None)
+                        st.rerun()
+            
+            # Ensure site_info is defined for both paths
+            if 'site_info' not in locals():
                 site_info = None
             
-            # Refresh button
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                if st.button("🔄 Refresh", key=f"refresh_sites_{method_prefix}"):
-                    st.session_state.pop('available_sites', None)
-                    st.session_state.pop('available_folders', None)
-                    st.rerun()
+            # Always show upload options - either to default location or custom site
+            upload_location = "default ExamSoft Import folder" if not site_info else f"custom location: {site_info.get('path', 'root')}"
+            st.write(f"✅ **Ready to upload to**: {upload_location}")
             
-            if site_info:
-                st.write("✅ **Ready to upload!** Select files to upload to SharePoint:")
-                
-                upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint", key=f"upload_inst_sp_{method_prefix}_cb") if data['instructions_docx'] else False
-                upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True, key=f"upload_exam_sp_{method_prefix}_cb")
-            else:
-                upload_instructions_sp = False
-                upload_exam_sp = False
+            upload_instructions_sp = st.checkbox("📄 Upload Instructions to SharePoint", key=f"upload_inst_sp_{method_prefix}_cb") if data['instructions_docx'] else False
+            upload_exam_sp = st.checkbox("📝 Upload Exam to SharePoint", value=True, key=f"upload_exam_sp_{method_prefix}_cb")
             
             # Email functionality
             st.write("📧 **Email Options (Optional):**")
             
-            # Quick email permission check
-            email_available = True
-            if 'email_permission_checked' not in st.session_state:
-                try:
-                    headers = {'Authorization': f'Bearer {st.session_state.get("sp_access_token")}'}
-                    test_response = requests.get('https://graph.microsoft.com/v1.0/me/mailFolders', headers=headers, timeout=10)
-                    email_available = test_response.status_code == 200
-                    st.session_state.email_permission_checked = email_available
-                except:
-                    email_available = False
-                    st.session_state.email_permission_checked = False
-            else:
-                email_available = st.session_state.email_permission_checked
+            # Check if user is authenticated
+            email_available = st.session_state.get('sp_authenticated', False)
             
             if not email_available:
-                st.warning("⚠️ Email permissions not available.")
-                st.info("💡 **Solution**: Sign out and sign back in to refresh your token with the new Mail.Send permission.")
-                
-                # Button to clear the permission check cache
-                if st.button("🔄 Recheck Email Permissions", key=f"recheck_email_{method_prefix}"):
-                    st.session_state.pop('email_permission_checked', None)
-                    st.rerun()
-                
+                st.info("🔐 Sign in with Microsoft 365 to enable email notifications")
                 send_email = False
             else:
+                # Always allow email option - errors will be handled gracefully during sending
                 send_email = st.checkbox("Send email notification", key=f"send_email_{method_prefix}_cb")
+                
+                if send_email:
+                    st.info("📧 Email will be sent using your Microsoft 365 account. If it fails, detailed error information will be provided.")
             
             email_recipients = ""
             email_subject = ""
@@ -1173,35 +1266,53 @@ This email was sent automatically by the ExamSoft RTF Formatter tool.""",
                     height=150
                 )
             
-            if site_info and st.button("🚀 Upload to SharePoint", use_container_width=True, key=f"sharepoint_upload_{method_prefix}_btn"):
+            if st.button("🚀 Upload to SharePoint", use_container_width=True, key=f"sharepoint_upload_{method_prefix}_btn"):
                 try:
                     with st.spinner("Processing upload and email..."):
                         access_token = st.session_state.get('sp_access_token')
                         
                         upload_results = []
                         
-                        # Upload instructions with selected site
+                        # Upload instructions
                         if upload_instructions_sp and data['instructions_docx']:
-                            success, result = upload_to_sharepoint_with_site(
-                                access_token, 
-                                data['instructions_docx'], 
-                                data['instructions_filename'],
-                                site_info['site_id'],
-                                site_info['path']
-                            )
-                            upload_results.append(("Instructions", success, result))
-                        
-                        # Upload exam with selected site
-                        if upload_exam_sp:
-                            rtf_content = data.get('exam_rtf_bytes') or data.get('exam_rtf_content')
-                            if rtf_content:
+                            if site_info:
+                                # Upload to custom site/folder
                                 success, result = upload_to_sharepoint_with_site(
                                     access_token, 
-                                    rtf_content, 
-                                    data['exam_filename'],
+                                    data['instructions_docx'], 
+                                    data['instructions_filename'],
                                     site_info['site_id'],
                                     site_info['path']
                                 )
+                            else:
+                                # Upload to default location
+                                success, result = upload_to_sharepoint_corrected(
+                                    access_token, 
+                                    data['instructions_docx'], 
+                                    data['instructions_filename']
+                                )
+                            upload_results.append(("Instructions", success, result))
+                        
+                        # Upload exam
+                        if upload_exam_sp:
+                            rtf_content = data.get('exam_rtf_bytes') or data.get('exam_rtf_content')
+                            if rtf_content:
+                                if site_info:
+                                    # Upload to custom site/folder
+                                    success, result = upload_to_sharepoint_with_site(
+                                        access_token, 
+                                        rtf_content, 
+                                        data['exam_filename'],
+                                        site_info['site_id'],
+                                        site_info['path']
+                                    )
+                                else:
+                                    # Upload to default location
+                                    success, result = upload_to_sharepoint_corrected(
+                                        access_token, 
+                                        rtf_content, 
+                                        data['exam_filename']
+                                    )
                                 upload_results.append(("Exam", success, result))
                         
                         # Show upload results
@@ -1218,7 +1329,7 @@ This email was sent automatically by the ExamSoft RTF Formatter tool.""",
                         # Send email if requested
                         if send_email and email_recipients.strip():
                             try:
-                                email_success = send_notification_email(
+                                email_success, email_message = send_notification_email(
                                     access_token,
                                     email_recipients.strip().split('\n'),
                                     email_subject,
@@ -1228,9 +1339,19 @@ This email was sent automatically by the ExamSoft RTF Formatter tool.""",
                                 if email_success:
                                     st.success("✅ Email notifications sent!")
                                 else:
-                                    st.warning("⚠️ Upload successful but email failed")
+                                    st.warning(f"⚠️ Upload successful but email failed: {email_message}")
+                                    # Show detailed error message
+                                    with st.expander("📧 Email Error Details"):
+                                        st.write(email_message)
+                                        if "Mail.Send scope required" in email_message:
+                                            st.info("💡 **Solution**: Sign out and sign back in to get email permissions")
+                                        elif "Unauthorized" in email_message:
+                                            st.info("💡 **Solution**: Your session expired. Sign out and sign back in")
                             except Exception as email_error:
                                 st.warning(f"⚠️ Upload successful but email failed: {str(email_error)}")
+                                with st.expander("📧 Email Error Details"):
+                                    st.error(f"Technical error: {str(email_error)}")
+                                    st.info("💡 Try signing out and signing back in, or skip email for now")
                         
                         if all(success for _, success, _ in upload_results):
                             st.balloons()
@@ -1293,6 +1414,7 @@ def main():
             
             ### 💡 Pro Tips:
             - **Answer Key Format**: Just list the letters (A, B, C, D) one per line - no headers needed
+            - **Mixed Question Types**: Only provide answers for multiple choice questions. Essay questions don't need answer key entries.
             - **Excel Files**: Put answers in the first column, one answer per row
             - **Questions**: Include the question number and all answer choices (A, B, C, D)
             - **Save Time**: Use SharePoint integration to automatically save files to the IT folder
@@ -1301,7 +1423,7 @@ def main():
             
             ### 🆘 Having Problems?
             **Common Issues & Solutions:**
-            - **"Wrong number of answers"**: Make sure your answer key has exactly one answer per question
+            - **"Wrong number of answers"**: Make sure your answer key has exactly one answer per multiple choice question. Essay questions don't need answers in the key.
             - **"Email not working"**: Sign out and sign back in to refresh permissions
             - **"File upload failed"**: Try copying and pasting the text instead
             

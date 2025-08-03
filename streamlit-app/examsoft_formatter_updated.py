@@ -33,9 +33,7 @@ except ImportError:
         "tenant_id": "charlestonlaw.edu",
         "authority": "https://login.microsoftonline.com/charlestonlaw.edu",
         "scope": ["https://graph.microsoft.com/Sites.ReadWrite.All", 
-                 "https://graph.microsoft.com/Files.ReadWrite.All",
-                 "https://graph.microsoft.com/User.Read",
-                 "https://graph.microsoft.com/Mail.Send"],
+                 "https://graph.microsoft.com/Files.ReadWrite.All"],
         "redirect_uri": "http://localhost:8501"
     }
 
@@ -47,7 +45,7 @@ try:
     
     # Direct upload function with correct path
     def upload_to_sharepoint_corrected(access_token, file_content, filename):
-        """Upload to correct SharePoint path: Exam Procedures/ExamSoft/Import with robust error handling"""
+        """Upload to correct SharePoint path: IT/Shared Documents/ExamSoft/File-converter/Import with robust error handling"""
         try:
             import requests
             from urllib.parse import quote
@@ -55,7 +53,8 @@ try:
             
             print("🔧 Using ROBUST upload function with enhanced debugging!")
             
-            site_id = "charlestonlaw.sharepoint.com,ba0b6d09-2f32-4ccf-a24d-9a41e9be4a6a,ffe7f195-f2eb-4f68-af47-35a01fa9a2d7"
+            # Updated to use IT site instead of main site
+            print("🎯 Targeting IT SharePoint site for upload...")
             
             # Step 1: Clean and validate filename
             # Remove invalid characters that might cause 400 errors
@@ -601,6 +600,24 @@ def extract_text_from_docx(file):
     text = "\n".join([para.text for para in doc.paragraphs])
     return clean_text_encoding(text)
 
+def extract_text_from_odt(file):
+    """Extract text from ODT file"""
+    try:
+        from odf.text import P
+        from odf.opendocument import load
+        doc = load(file)
+        paragraphs = doc.getElementsByType(P)
+        text_content = []
+        for p in paragraphs:
+            text_content.append(str(p))
+        return clean_text_encoding('\n'.join(text_content))
+    except ImportError:
+        st.error("❌ ODT support requires 'odfpy' library. Please convert to DOCX format.")
+        return ""
+    except Exception as e:
+        st.error(f"❌ Failed to read ODT file: {str(e)}")
+        return ""
+
 def extract_text(file):
     """Extract text from uploaded file based on file type"""
     file_extension = file.name.lower().split('.')[-1]
@@ -608,12 +625,14 @@ def extract_text(file):
         return extract_text_from_rtf(file)
     elif file_extension in ['docx', 'doc']:
         return extract_text_from_docx(file)
+    elif file_extension == 'odt':
+        return extract_text_from_odt(file)
     else:
         st.error(f"Unsupported file type: {file_extension}")
         return ""
 
 def load_answer_key(file):
-    """Load answer key from Excel or CSV file"""
+    """Load answer key from Excel, ODS, or CSV file"""
     try:
         if file.name.endswith('.xlsx'):
             # Try reading with and without header
@@ -622,6 +641,13 @@ def load_answer_key(file):
             except Exception:
                 file.seek(0)
                 df = pd.read_excel(file, header=None)
+        elif file.name.endswith('.ods'):
+            # ODS file
+            try:
+                df = pd.read_excel(file, engine='odf', header=0)
+            except Exception:
+                file.seek(0)
+                df = pd.read_excel(file, engine='odf', header=None)
         else:
             try:
                 df = pd.read_csv(file, header=0)
@@ -731,63 +757,6 @@ def generate_instructions_docx(instructions_text):
     doc.save(doc_bytes)
     doc_bytes.seek(0)
     return doc_bytes.getvalue()
-
-def parse_answer_key_with_header_detection(answer_key_text):
-    """Parse answer key and detect/skip headers"""
-    if not answer_key_text.strip():
-        return []
-    
-    lines = [line.strip() for line in answer_key_text.strip().splitlines() if line.strip()]
-    
-    # Common header patterns to skip - be more specific to avoid filtering actual answers
-    header_patterns = [
-        r'^(answer\s*key|correct\s*answers?|solutions?|exam\s*answers?)$',  # "Answer Key", "Correct Answers", etc.
-        r'^(question\s*#?\s*answer|question\s*answer)$',  # "Question Answer", etc. (removed plain "answer")
-        r'^(q\s*a|question\s*answer)$',  # "Q A", "Question Answer"
-        r'^\d+\.\s*[a-z]\s*$',  # Skip numbered headers like "1. A" 
-        r'^[a-z]\s+[a-z]\s+[a-z]',  # Skip multiple letters with spaces (likely column headers like "A B C")
-        r'^(professor|course|class|exam|final|midterm|test)',  # Course/exam info
-        r'^(name|date|student|id)',  # Student info headers
-        r'^\s*[-=_]+\s*$',  # Separator lines
-        r'^(question|q)$',  # Just "Question" or "Q"
-        r'^(#|number|num)$',  # Just "#", "Number", "Num"
-    ]
-    
-    answer_lines = []
-    for line in lines:
-        line_lower = line.lower()
-        
-        # Skip if matches any header pattern
-        is_header = False
-        for pattern in header_patterns:
-            if re.match(pattern, line_lower):
-                is_header = True
-                break
-        
-        if not is_header:
-            # Try to extract just the answer letter if line has extra formatting
-            # Handle formats like "1. A", "Q1: B", "1) C", etc.
-            answer_match = re.search(r'[a-zA-Z]', line)
-            if answer_match:
-                answer_letter = answer_match.group().upper()
-                # Validate it's a reasonable answer (A-Z)
-                if answer_letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
-                    answer_lines.append(answer_letter)
-    
-    # Additional validation and debugging
-    import streamlit as st
-    if len(answer_lines) < 5:
-        st.warning(f"⚠️ Only found {len(answer_lines)} answers in the answer key. Please check that the first column contains your answer letters.")
-    else:
-        st.success(f"✅ Found {len(answer_lines)} answers in the answer key")
-        
-    # Debug: show the actual lines we processed
-    if len(lines) > 0:
-        st.info(f"📝 Processed {len(lines)} total lines from answer key file")
-        if len(lines) != len(answer_lines):
-            st.info(f"ℹ️ Some lines were filtered out. Raw lines: {len(lines)}, Valid answers: {len(answer_lines)}")
-    
-    return answer_lines
 
 def parse_questions_from_text(questions_text, answer_key, use_asterisk_method=True):
     """Parse questions from the text and format for ExamSoft"""
@@ -903,7 +872,7 @@ def create_rtf_content(questions_list, answer_key=None, use_answer_key_method=Fa
     if use_answer_key_method and answer_key:
         rtf_body += r"\par Answers:\par "
         for i, answer in enumerate(answer_key, 1):
-            rtf_body += f"{i}. {answer.lower()}\\par "
+            rtf_body += f"{i}. {answer.lower()}" + r"\par "
     return rtf_header + rtf_body + "}"
 
 
