@@ -761,34 +761,105 @@ def generate_instructions_docx(instructions_text):
 def parse_questions_from_text(questions_text, answer_key, use_asterisk_method=True):
     """Parse questions from the text and format for ExamSoft"""
     formatted_questions = []
-    # Split on question numbers at start of line or start of text
-    question_blocks = re.split(r'(?:^|\n)\s*(?:Type:\s*E\s+)?(\d+)\.\s+', questions_text)
     mc_index = 0  # index for multiple choice questions only
+    
+    # Simple approach: Split on numbered questions and treat them all as MC
+    # Extract essays separately and add at the end
+    
+    # First, extract essays that are NOT numbered questions
+    essay_content = None
+    essay_match = re.search(r'(?:^|\n)\s*(ESSAY[^\n]*.*?)(?=\n\s*\d+\.\s|\Z)', questions_text, re.DOTALL | re.IGNORECASE)
+    if essay_match:
+        essay_content = essay_match.group(1).strip()
+        # Remove essay from the text to avoid interference
+        questions_text = questions_text[:essay_match.start()] + questions_text[essay_match.end():]
+    
+    # Parse numbered questions - ALL are treated as multiple choice
+    question_blocks = re.split(r'(?:^|\n)\s*(?:Type:\s*E\s+)?(\d+)\.\s+', questions_text)
+    highest_question_num = 0
+    
     for i in range(1, len(question_blocks), 2):
         if i + 1 < len(question_blocks):
             q_num = int(question_blocks[i])
+            highest_question_num = max(highest_question_num, q_num)
             q_content = question_blocks[i + 1].strip()
-            q_type = classify_question(q_content)
-            if q_type == 'essay':
-                formatted_q = format_essay_question(q_num, q_content)
-            else:
+            
+            if q_content:  # Only process if there's content
+                # Template logic: ALL numbered questions are multiple choice
                 formatted_q = format_multiple_choice_question(q_num, q_content, answer_key, use_asterisk_method, mc_index)
                 mc_index += 1
-            if formatted_q:
-                formatted_questions.append(formatted_q)
+                if formatted_q:
+                    formatted_questions.append(formatted_q)
+    
+    # Add essay question at the end if found
+    if essay_content:
+        next_question_num = highest_question_num + 1
+        formatted_q = format_essay_question(next_question_num, essay_content)
+        if formatted_q:
+            formatted_questions.append(formatted_q)
+    
     return formatted_questions
 
 def classify_question(q_content):
-    """Classify question as 'mc' or 'essay' based on content."""
-    # If any line matches A.–D. pattern, it's MC
+    """Classify question as 'mc' or 'essay' based on content and structure."""
     lines = q_content.split('\n')
-    for line in lines:
-        if re.match(r'^[A-D]\.\s+', line.strip()):
-            return 'mc'
-    # If 'ESSAY' or 'Type: E' present, or no answer choices, treat as essay
-    if 'ESSAY' in q_content.upper() or re.search(r'Type:\s*E', q_content, re.IGNORECASE):
+    
+    # Method 0: Primary template logic - if content has "ESSAY" indicators, it's essay
+    if 'ESSAY' in q_content.upper() or 'WORD COUNT' in q_content.upper():
         return 'essay'
-    # If no answer choices, treat as essay
+    
+    # Method 1: Check for explicit A, B, C, D answer choices
+    choice_patterns = [
+        r'^\s*[A-D]\.\s+',      # Standard: "A. answer" (allows leading whitespace)
+        r'^\s*[A-D]\)\s+',      # Alternative: "A) answer"
+    ]
+    
+    found_choices = set()
+    for line in lines:
+        line_stripped = line.strip()
+        if line_stripped:
+            for pattern in choice_patterns:
+                match = re.match(pattern, line_stripped)
+                if match:
+                    letter = line_stripped[0].upper()
+                    if letter in ['A', 'B', 'C', 'D']:
+                        found_choices.add(letter)
+    
+    # If we found explicit A,B,C,D labels, it's definitely multiple choice
+    if len(found_choices) >= 2 and 'A' in found_choices:
+        return 'mc'
+    
+    # Method 2: Template logic - numbered questions are typically multiple choice
+    # In the document structure, numbered questions (like "3. question text") are MC
+    # while essays start with "ESSAY QUESTION" headers
+    first_line = lines[0].strip() if lines else ""
+    
+    # Check if content starts with a number (indicating numbered question structure)
+    if re.match(r'^\d+\.\s', first_line):
+        # This follows the numbered question template - likely multiple choice
+        # Look for "Which of the following" + multiple answer options as confirmation
+        has_which_following = any('which of the following' in line.lower() for line in lines)
+        
+        if has_which_following:
+            # Count potential answer lines
+            potential_answers = []
+            for line in lines:
+                line_stripped = line.strip()
+                if (line_stripped and 
+                    not line_stripped.lower().startswith('which of the following') and
+                    not line_stripped.endswith('?') and
+                    not re.match(r'^\d+\.', line_stripped) and  # Not a question number
+                    len(line_stripped) > 5):  # Reasonable answer length
+                    potential_answers.append(line_stripped)
+            
+            # If we found multiple potential answers, it's multiple choice
+            if len(potential_answers) >= 3:
+                return 'mc'
+        
+        # Even without "which of the following", numbered questions are usually MC
+        return 'mc'
+    
+    # Default: if it doesn't follow numbered question structure, treat as essay
     return 'essay'
 
 def format_multiple_choice_question(q_num, content, answer_key, use_asterisk_method=True, mc_index=None):
@@ -797,11 +868,26 @@ def format_multiple_choice_question(q_num, content, answer_key, use_asterisk_met
     question_text = []
     choices = []
     current_section = "question"
+    
+    # Enhanced patterns to catch indented answer choices
+    choice_patterns = [
+        r'^\s*([A-D])\.\s*(.+)',    # Standard or indented: "A. answer" or "    A. answer"
+        r'^\s*([A-D])\)\s*(.+)',    # Alternative: "A) answer"
+    ]
+    
+    # First pass: try to find explicit A,B,C,D choices
+    found_explicit_choices = False
     for line in lines:
-        line = line.strip()
-        if not line:
+        if not line.strip():
             continue
-        choice_match = re.match(r'^([A-D])\.\s*(.+)', line)
+            
+        choice_match = None
+        for pattern in choice_patterns:
+            choice_match = re.match(pattern, line)
+            if choice_match:
+                found_explicit_choices = True
+                break
+        
         if choice_match:
             current_section = "choices"
             choice_letter = choice_match.group(1)
@@ -817,13 +903,94 @@ def format_multiple_choice_question(q_num, content, answer_key, use_asterisk_met
                 choices.append(f"{choice_letter}. {choice_text}")
         else:
             if current_section == "question":
-                question_text.append(line)
+                question_text.append(line.strip())
+    
+    # If no explicit choices found, but this was classified as MC, try to auto-assign A,B,C,D
+    if not found_explicit_choices:
+        # Look for "Which of the following" pattern and extract potential answers
+        potential_answers = []
+        question_stem = []
+        collecting_answers = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+            
+            if 'which of the following' in line_stripped.lower():
+                question_stem.append(line_stripped)
+                collecting_answers = True
+            elif collecting_answers and len(line_stripped) > 10:  # Potential answer
+                potential_answers.append(line_stripped)
+            elif not collecting_answers:
+                question_stem.append(line_stripped)
+        
+        question_text = question_stem
+        
+        # Assign A,B,C,D to the potential answers
+        choice_letters = ['A', 'B', 'C', 'D']
+        for i, answer in enumerate(potential_answers[:4]):  # Limit to 4 choices
+            if i < len(choice_letters):
+                letter = choice_letters[i]
+                # Check if this is the correct answer
+                if use_asterisk_method and mc_index is not None and mc_index < len(answer_key):
+                    correct_answer = answer_key[mc_index].upper().strip()
+                    if letter == correct_answer:
+                        choices.append(f"*{letter}. {answer}")
+                    else:
+                        choices.append(f"{letter}. {answer}")
+                else:
+                    choices.append(f"{letter}. {answer}")
+    
     result = []
     if question_text:
-        full_question = f"{q_num}. {' '.join(question_text)}"
-        if '\n\n' in ' '.join(question_text):
-            full_question = full_question.replace('\n\n', '<br>')
-        result.append(full_question)
+        # Join all question text
+        full_text = ' '.join(question_text)
+        
+        # Check if the question has multiple paragraphs (indicated by double newlines or long content)
+        paragraphs = []
+        
+        # Split by double newlines first
+        if '\n\n' in full_text:
+            paragraphs = [p.strip() for p in full_text.split('\n\n') if p.strip()]
+        else:
+            # For very long questions, try to split into logical paragraphs
+            # Look for sentence endings followed by capital letters (new paragraph indicators)
+            sentences = full_text.split('. ')
+            current_paragraph = []
+            
+            for i, sentence in enumerate(sentences):
+                current_paragraph.append(sentence)
+                
+                # If this is a long paragraph (>200 chars) and next sentence starts with capital, split
+                current_text = '. '.join(current_paragraph)
+                if (len(current_text) > 200 and 
+                    i < len(sentences) - 1 and 
+                    len(sentences[i + 1]) > 0 and 
+                    sentences[i + 1][0].isupper()):
+                    
+                    # Check if this looks like a natural paragraph break
+                    if not sentence.endswith(('Mr', 'Mrs', 'Dr', 'vs', 'Inc', 'Ltd', 'Co')):
+                        paragraphs.append(current_text + '.')
+                        current_paragraph = []
+            
+            # Add remaining text
+            if current_paragraph:
+                remaining = '. '.join(current_paragraph)
+                if not remaining.endswith('.') and len(sentences) > 1:
+                    remaining += '.'
+                paragraphs.append(remaining)
+        
+        # Format the question with paragraph tags if multiple paragraphs
+        if len(paragraphs) > 1:
+            result.append(f"{q_num}.")  # Question number on separate line
+            for para in paragraphs:
+                result.append(f"<p>{para}</p>")
+        else:
+            # Single paragraph - use standard formatting
+            full_question = f"{q_num}. {full_text}"
+            result.append(full_question)
+    
     result.extend(choices)
     return '\n'.join(result)
 

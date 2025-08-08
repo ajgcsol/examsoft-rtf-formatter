@@ -13,7 +13,40 @@ except ImportError:
     M365_CONFIG = {}
 
 # Token storage file (encrypted with simple base64 for basic obfuscation)
-TOKEN_CACHE_FILE = ".auth_cache.json"
+# Generate unique cache file per browser session
+def get_session_cache_file():
+    """Generate a unique cache file name per browser session"""
+    import hashlib
+    
+    # Try multiple approaches to get a stable session identifier
+    session_id = None
+    
+    try:
+        # Method 1: Use Streamlit's runtime context (most reliable)
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        if ctx and hasattr(ctx, 'session_id'):
+            session_id = str(ctx.session_id)
+    except:
+        pass
+    
+    if not session_id:
+        try:
+            # Method 2: Use a session-persistent key in session_state
+            if 'browser_session_id' not in st.session_state:
+                import uuid
+                st.session_state.browser_session_id = str(uuid.uuid4())
+            session_id = st.session_state.browser_session_id
+        except:
+            pass
+    
+    # Ultimate fallback: use session_state object ID
+    if not session_id:
+        session_id = str(id(st.session_state))
+    
+    # Create hash of session ID for filename
+    session_hash = hashlib.md5(session_id.encode()).hexdigest()[:12]
+    return f".auth_cache_{session_hash}.json"
 
 def encode_token_data(data):
     """Simple encoding for token storage (not production-grade encryption)"""
@@ -30,20 +63,26 @@ def decode_token_data(encoded_data):
         return None
 
 def save_token_to_cache(token_data):
-    """Save authentication tokens to local cache file"""
+    """Save authentication tokens to browser-specific cache file"""
     try:
+        # Set token to expire in 7 days instead of default 1 hour
+        expires_in = token_data.get('expires_in', 604800)  # 7 days in seconds
+        
         cache_data = {
             'access_token': token_data.get('access_token'),
             'refresh_token': token_data.get('refresh_token'),
-            'expires_in': token_data.get('expires_in', 3600),
-            'expires_at': (datetime.now() + timedelta(seconds=token_data.get('expires_in', 3600))).isoformat(),
+            'expires_in': expires_in,
+            'expires_at': (datetime.now() + timedelta(seconds=expires_in)).isoformat(),
             'scope': token_data.get('scope', []),
             'account_info': token_data.get('account', {}),
             'saved_at': datetime.now().isoformat()
         }
         
+        # Get browser-specific cache file
+        cache_file = get_session_cache_file()
+        
         encoded_data = encode_token_data(cache_data)
-        with open(TOKEN_CACHE_FILE, 'w') as f:
+        with open(cache_file, 'w') as f:
             f.write(encoded_data)
         
         return True
@@ -52,22 +91,36 @@ def save_token_to_cache(token_data):
         return False
 
 def load_token_from_cache():
-    """Load authentication tokens from local cache file"""
+    """Load authentication tokens from browser-specific cache file"""
     try:
-        if not os.path.exists(TOKEN_CACHE_FILE):
+        cache_file = get_session_cache_file()
+        if not os.path.exists(cache_file):
             return None
         
-        with open(TOKEN_CACHE_FILE, 'r') as f:
+        with open(cache_file, 'r') as f:
             encoded_data = f.read().strip()
         
         cache_data = decode_token_data(encoded_data)
         if not cache_data:
             return None
         
-        # Check if token is still valid (with 5 minute buffer)
+        # Check if token is still valid (with 1 hour buffer for refresh)
         expires_at = datetime.fromisoformat(cache_data['expires_at'])
-        if datetime.now() >= expires_at - timedelta(minutes=5):
-            # Token expired or about to expire
+        if datetime.now() >= expires_at - timedelta(hours=1):
+            # Token expired or about to expire - try to refresh
+            refresh_token = cache_data.get('refresh_token')
+            if refresh_token:
+                try:
+                    refreshed = refresh_access_token(refresh_token)
+                    if refreshed and 'access_token' in refreshed:
+                        # Save refreshed token and return it
+                        save_token_to_cache(refreshed)
+                        return refreshed
+                except:
+                    pass
+            # If refresh failed, remove expired cache
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
             return None
         
         return cache_data
@@ -77,13 +130,35 @@ def load_token_from_cache():
         return None
 
 def clear_token_cache():
-    """Clear the authentication cache"""
+    """Clear the browser-specific authentication cache"""
     try:
-        if os.path.exists(TOKEN_CACHE_FILE):
-            os.remove(TOKEN_CACHE_FILE)
+        cache_file = get_session_cache_file()
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
         return True
     except:
         return False
+
+def cleanup_old_cache_files():
+    """Clean up old cache files (older than 7 days)"""
+    try:
+        import glob
+        cache_files = glob.glob(".auth_cache_*.json")
+        cleaned = 0
+        
+        for cache_file in cache_files:
+            try:
+                # Check file age
+                file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+                if datetime.now() - file_time > timedelta(days=7):
+                    os.remove(cache_file)
+                    cleaned += 1
+            except:
+                continue
+        
+        return cleaned
+    except:
+        return 0
 
 def refresh_access_token(refresh_token):
     """Refresh the access token using the refresh token"""
@@ -166,7 +241,10 @@ def get_user_info(access_token):
         return None
 
 def initialize_persistent_auth():
-    """Initialize persistent authentication system with better caching"""
+    """Initialize persistent authentication system with browser-specific caching"""
+    
+    # Clean up old cache files on startup
+    cleanup_old_cache_files()
     
     # Initialize session state
     if 'sp_access_token' not in st.session_state:
